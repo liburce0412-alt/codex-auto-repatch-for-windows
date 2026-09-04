@@ -79,6 +79,10 @@ $positiveFixtures = @(
   [pscustomobject]@{
     Name = 'codex-26-810-auto-review-return'
     Source = 'function visible(e,i,a,r,t,n){return e?.has(i.model)===!0||i.model!==`codex-auto-review`&&(a&&!r&&t!==`amazonBedrock`?n.has(i.model):!i.hidden)}'
+  },
+  [pscustomobject]@{
+    Name = 'codex-26-825-configured-catalog-return'
+    Source = 'function $ii({additionalAvailableModels:e,authMethod:t,availableModels:n,hasConfiguredModelCatalog:r,isCustomModelProvider:i,model:a,useHiddenModels:o}){return e?.has(a.model)===!0||a.model!==`codex-auto-review`&&(r&&!a.hidden||(o&&!i&&t!==`amazonBedrock`?n.has(a.model):!a.hidden))}'
   }
 )
 $negativeFixture = [pscustomobject]@{

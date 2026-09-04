@@ -38,7 +38,7 @@ $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
   $output = @(
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -VerifyOnly 2>&1
+    & pwsh.exe -NoProfile -ExecutionPolicy Bypass -File $installer -VerifyOnly -BrowserComputerUseOnly 2>&1
   )
   $exitCode = $LASTEXITCODE
 } finally {
@@ -57,8 +57,8 @@ $expectedCurrentCacheMarker = "official lightweight cache verification ok: compu
 if (-not $text.Contains($expectedCurrentCacheMarker)) {
   throw "descriptor-only repair did not verify the current package cache ($expectedCurrentCacheMarker): $text"
 }
-if ($text -notmatch 'runtime import ok: .*"exports":\["sky"\].*"method":"list_windows"') {
-  throw "descriptor-only repair did not verify the official @oai/sky list_windows API: $text"
+if ($text -notmatch 'runtime import ok: .*"exports":\["sky"\].*"transport":"trusted-service-rpc".*"method":"list_windows"') {
+  throw "descriptor-only repair did not verify the official @oai/sky trusted-service list_windows API: $text"
 }
 
 $cacheDescriptor = Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-bundled\computer-use\$pluginVersion\.codex-plugin\plugin.json"

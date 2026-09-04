@@ -5,12 +5,18 @@ param(
   [switch]$VerifyOnly,
   [switch]$StrictVerifyOnly,
   [switch]$VerifyAllBundledPluginsAvailable,
+  [switch]$BrowserComputerUseOnly,
   [switch]$SkipUserEnvironment
 )
 
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-computer-use-local]'
 $script:ConfigBackupBeforeOverwrite = @{}
+$script:BrowserComputerUsePluginNames = @('browser', 'chrome', 'computer-use')
+
+if ($BrowserComputerUseOnly -and $VerifyAllBundledPluginsAvailable) {
+  throw '-BrowserComputerUseOnly cannot be combined with -VerifyAllBundledPluginsAvailable'
+}
 
 function Write-Log {
   param([string]$Message)
@@ -213,7 +219,7 @@ function Set-TomlTableKey {
     [string]$ConfigPath,
     [string]$Header,
     [string]$Key,
-    [string]$Value,
+    [object]$Value,
     [string]$Reason = 'set-table-key'
   )
 
@@ -224,8 +230,12 @@ function Set-TomlTableKey {
   $escapedHeader = [regex]::Escape($Header)
   $tablePattern = "(?ms)^(?<header>$escapedHeader)\s*\r?\n(?<body>(?:(?!^\[).)*)"
   $tableMatch = [regex]::Match($content, $tablePattern)
-  $escapedValue = [string]$Value -replace "'", "''"
-  $line = "$Key = '$escapedValue'"
+  $line = if ($Value -is [bool]) {
+    "$Key = $($Value.ToString().ToLowerInvariant())"
+  } else {
+    $escapedValue = [string]$Value -replace "'", "''"
+    "$Key = '$escapedValue'"
+  }
   if ($tableMatch.Success) {
     $body = $tableMatch.Groups['body'].Value
     $escapedKey = [regex]::Escape($Key)
@@ -249,6 +259,84 @@ function Set-TomlTableKey {
 
   Backup-ConfigBeforeOverwrite $ConfigPath $Reason
   Write-Utf8NoBom $ConfigPath $content
+}
+
+function Get-TomlTableStringValue {
+  param(
+    [string]$ConfigPath,
+    [string]$Header,
+    [string]$Key
+  )
+
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return ''
+  }
+
+  $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $escapedHeader = [regex]::Escape($Header)
+  $tableMatch = [regex]::Match($content, "(?ms)^$escapedHeader\s*\r?\n(?<body>(?:(?!^\[).)*)")
+  if (-not $tableMatch.Success) {
+    return ''
+  }
+
+  $escapedKey = [regex]::Escape($Key)
+  $keyPattern = '(?m)^\s*{0}\s*=\s*(?<quote>[''"])(?<value>.*?)\k<quote>\s*(?:#.*)?$' -f $escapedKey
+  $keyMatch = [regex]::Match($tableMatch.Groups['body'].Value, $keyPattern)
+  if (-not $keyMatch.Success) {
+    return ''
+  }
+  return $keyMatch.Groups['value'].Value
+}
+
+function Merge-SemicolonDelimitedValues {
+  param([string[]]$Values)
+
+  $seen = @{}
+  $merged = New-Object System.Collections.Generic.List[string]
+  foreach ($value in @($Values)) {
+    foreach ($item in @([string]$value -split ';')) {
+      $candidate = $item.Trim()
+      if ([string]::IsNullOrWhiteSpace($candidate)) {
+        continue
+      }
+      $key = $candidate.Replace('/', '\').TrimEnd([char[]]'\/').ToLowerInvariant()
+      if ($seen.ContainsKey($key)) {
+        continue
+      }
+      $seen[$key] = $true
+      $merged.Add($candidate) | Out-Null
+    }
+  }
+  return ($merged -join ';')
+}
+
+function Merge-NodeReplTrustedServices {
+  param(
+    [string]$ExistingJson,
+    [string]$BrowserServicePath
+  )
+
+  $services = [ordered]@{}
+  if (-not [string]::IsNullOrWhiteSpace($ExistingJson)) {
+    try {
+      $existing = $ExistingJson | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      throw "cannot preserve invalid NODE_REPL_TRUSTED_SERVICES JSON: $($_.Exception.Message)"
+    }
+    if ($null -eq $existing -or $existing -isnot [pscustomobject]) {
+      throw 'cannot preserve NODE_REPL_TRUSTED_SERVICES because its JSON value is not an object'
+    }
+    foreach ($property in @($existing.PSObject.Properties)) {
+      if ($property.Name -ieq 'browser' -or $property.Name -ieq 'sky') {
+        continue
+      }
+      $services[$property.Name] = $property.Value
+    }
+  }
+
+  $services['browser'] = $BrowserServicePath -replace '\\', '/'
+  $services['sky'] = '@oai/sky/service'
+  return ($services | ConvertTo-Json -Depth 30 -Compress)
 }
 
 function Remove-TomlTableKeys {
@@ -293,6 +381,21 @@ function Remove-TomlTableKeys {
   Backup-ConfigBeforeOverwrite $ConfigPath $Reason
   $updated = $content.Remove($match.Index, $match.Length).Insert($match.Index, $rebuilt.ToString())
   Write-Utf8NoBom $ConfigPath $updated
+}
+
+function Get-UsablePythonInvocation {
+  $python = Get-Command python.exe -All -ErrorAction SilentlyContinue |
+    Where-Object { $_.Source -and $_.Source -notmatch '(?i)[\\/]WindowsApps[\\/]' } |
+    Select-Object -First 1
+  if ($python) {
+    return [pscustomobject]@{ Path = [string]$python.Source; Arguments = @() }
+  }
+
+  $launcher = Get-Command py.exe -All -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($launcher) {
+    return [pscustomobject]@{ Path = [string]$launcher.Source; Arguments = @('-3') }
+  }
+  return $null
 }
 
 function Get-ChromeUserDataDirectoryOverride {
@@ -359,7 +462,10 @@ function Get-ChromeUserDataDirectoryOverride {
 }
 
 function Enable-UserEnvironment {
-  param([string]$MarketplaceRoot)
+  param(
+    [string]$MarketplaceRoot,
+    [object]$RuntimeInventory
+  )
 
   if ($SkipUserEnvironment) {
     Write-Log 'skipping user environment update'
@@ -369,9 +475,24 @@ function Enable-UserEnvironment {
   [Environment]::SetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', '1', 'User')
   $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
 
+  if ($RuntimeInventory) {
+    [Environment]::SetEnvironmentVariable('CODEX_NODE_REPL_PATH', $RuntimeInventory.NodeReplPath, 'User')
+    [Environment]::SetEnvironmentVariable('CODEX_BROWSER_USE_NODE_PATH', $RuntimeInventory.NodePath, 'User')
+    $env:CODEX_NODE_REPL_PATH = $RuntimeInventory.NodeReplPath
+    $env:CODEX_BROWSER_USE_NODE_PATH = $RuntimeInventory.NodePath
+  }
+
   $trustedRoots = @(Get-NodeReplTrustedRoots $MarketplaceRoot)
   if ($trustedRoots.Count -gt 0) {
-    $trustedCodePaths = $trustedRoots -join ';'
+    $trustedCodePaths = if ($BrowserComputerUseOnly) {
+      Merge-SemicolonDelimitedValues @(
+        [Environment]::GetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', 'User'),
+        $env:NODE_REPL_TRUSTED_CODE_PATHS,
+        ($trustedRoots -join ';')
+      )
+    } else {
+      $trustedRoots -join ';'
+    }
     [Environment]::SetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', $trustedCodePaths, 'User')
     $env:NODE_REPL_TRUSTED_CODE_PATHS = $trustedCodePaths
   }
@@ -403,6 +524,9 @@ public static class CodexEnvBroadcast {
   }
 
   Write-Log 'enabled CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE=1 for this process and the current user'
+  if ($RuntimeInventory) {
+    Write-Log "updated current CUA runtime environment: node_repl=$($RuntimeInventory.NodeReplPath) node=$($RuntimeInventory.NodePath)"
+  }
   if ($trustedRoots.Count -gt 0) {
     Write-Log "enabled NODE_REPL_TRUSTED_CODE_PATHS=$trustedCodePaths for this process and the current user"
   }
@@ -1009,15 +1133,54 @@ function Update-BundledMarketplaceManifest {
     category = 'Productivity'
   }
 
+  $sourceRoot = Get-InstalledBundledMarketplaceRoot
+  $sourceManifestPath = Join-Path $sourceRoot '.agents\plugins\marketplace.json'
+  $sourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $sourceManifestPath | ConvertFrom-Json
+
+  if ($BrowserComputerUseOnly) {
+    $scopedEntries = @{}
+    foreach ($sourcePlugin in @($sourceManifest.plugins)) {
+      $name = [string]$sourcePlugin.name
+      if ($name -notin $script:BrowserComputerUsePluginNames) {
+        continue
+      }
+      $scopedEntries[$name] = if ($name -eq 'computer-use') { $entry } else { $sourcePlugin }
+    }
+    $missingEntries = @($script:BrowserComputerUsePluginNames | Where-Object { -not $scopedEntries.ContainsKey($_) })
+    if ($missingEntries.Count -gt 0) {
+      throw "installed bundled marketplace is missing scoped plugin entries: $($missingEntries -join ',')"
+    }
+
+    $mergedPlugins = @()
+    $mergedNames = @{}
+    foreach ($plugin in @($json.plugins)) {
+      $name = [string]$plugin.name
+      if ($name -notin $script:BrowserComputerUsePluginNames) {
+        $mergedPlugins += $plugin
+        continue
+      }
+      if (-not $mergedNames.ContainsKey($name)) {
+        $mergedPlugins += $scopedEntries[$name]
+        $mergedNames[$name] = $true
+      }
+    }
+    foreach ($name in $script:BrowserComputerUsePluginNames) {
+      if (-not $mergedNames.ContainsKey($name)) {
+        $mergedPlugins += $scopedEntries[$name]
+        $mergedNames[$name] = $true
+      }
+    }
+    $json.plugins = $mergedPlugins
+    ConvertTo-JsonFile $manifestPath $json
+    Write-Log "merged scoped bundled marketplace entries: $($script:BrowserComputerUsePluginNames -join ',')"
+    return
+  }
+
   $plugins = @($json.plugins | Where-Object { $_.name -ne 'computer-use' })
   $pluginNames = @{}
   foreach ($plugin in $plugins) {
     $pluginNames[[string]$plugin.name] = $true
   }
-
-  $sourceRoot = Get-InstalledBundledMarketplaceRoot
-  $sourceManifestPath = Join-Path $sourceRoot '.agents\plugins\marketplace.json'
-  $sourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $sourceManifestPath | ConvertFrom-Json
   foreach ($sourcePlugin in @($sourceManifest.plugins)) {
     $name = [string]$sourcePlugin.name
     if ($name -ne 'computer-use' -and -not $pluginNames.ContainsKey($name)) {
@@ -1055,7 +1218,8 @@ function Get-StableBundledMarketplaceRoot {
 function Get-NodeReplTrustedRoots {
   param([string]$MarketplaceRoot)
 
-  return @($MarketplaceRoot, (Join-Path (Split-Path -Parent $MarketplaceRoot) 'openai-bundled-cache')) |
+  $pluginCacheRoot = Join-Path ([System.IO.Path]::GetFullPath($CodexHome)) 'plugins\cache\openai-bundled'
+  return @($MarketplaceRoot, $pluginCacheRoot) |
     Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
     ForEach-Object { (Resolve-Path -LiteralPath $_).Path } |
     Select-Object -Unique
@@ -1194,42 +1358,74 @@ function Update-CodexConfig {
 
   $configPath = Join-Path $CodexHome 'config.toml'
   $preferredRoot = Get-PreferredBundledMarketplaceRoot $configPath $MarketplaceRoot
-  Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
+  $marketplaceValues = @{
     last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     source = '\\?\' + $preferredRoot
     source_type = 'local'
   }
+  if ($BrowserComputerUseOnly) {
+    foreach ($key in @('last_updated', 'source', 'source_type')) {
+      Set-TomlTableKey $configPath '[marketplaces.openai-bundled]' $key $marketplaceValues[$key] "set-bundled-marketplace-$key"
+    }
+  } else {
+    Set-TomlTable $configPath '[marketplaces.openai-bundled]' $marketplaceValues
+  }
   $effectiveRoot = Get-ConfiguredBundledMarketplaceRoot $preferredRoot
   if ([System.IO.Path]::GetFullPath($effectiveRoot) -ne [System.IO.Path]::GetFullPath($preferredRoot)) {
     Write-Log "codex-cli refused the local bundled marketplace source; repointing marketplaces.openai-bundled at the reserved root: $effectiveRoot"
-    Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
+    $marketplaceValues = @{
       last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
       source = '\\?\' + $effectiveRoot
       source_type = 'local'
     }
+    if ($BrowserComputerUseOnly) {
+      foreach ($key in @('last_updated', 'source', 'source_type')) {
+        Set-TomlTableKey $configPath '[marketplaces.openai-bundled]' $key $marketplaceValues[$key] "set-bundled-marketplace-$key"
+      }
+    } else {
+      Set-TomlTable $configPath '[marketplaces.openai-bundled]' $marketplaceValues
+    }
   }
-  Set-TomlTable $configPath '[plugins."computer-use@openai-bundled"]' @{
-    enabled = $true
-  }
-  Set-TomlTable $configPath '[plugins."browser@openai-bundled"]' @{
-    enabled = $true
-  }
-  Set-TomlTable $configPath '[plugins."chrome@openai-bundled"]' @{
-    enabled = $true
-  }
-  Set-TomlTable $configPath '[windows]' @{
-    sandbox = 'unelevated'
+  if ($BrowserComputerUseOnly) {
+    foreach ($pluginName in $script:BrowserComputerUsePluginNames) {
+      Set-TomlTableKey $configPath "[plugins.`"$pluginName@openai-bundled`"]" 'enabled' $true "enable-$pluginName-plugin"
+    }
+    Set-TomlTableKey $configPath '[windows]' 'sandbox' 'unelevated' 'set-windows-sandbox'
+    Set-TomlTableKey $configPath '[features]' 'computer_use' $true 'enable-computer-use-feature'
+  } else {
+    Set-TomlTable $configPath '[plugins."computer-use@openai-bundled"]' @{
+      enabled = $true
+    }
+    Set-TomlTable $configPath '[plugins."browser@openai-bundled"]' @{
+      enabled = $true
+    }
+    Set-TomlTable $configPath '[plugins."chrome@openai-bundled"]' @{
+      enabled = $true
+    }
+    Set-TomlTable $configPath '[windows]' @{
+      sandbox = 'unelevated'
+    }
   }
   $trustedRoots = @(Get-NodeReplTrustedRoots $MarketplaceRoot)
   if ($trustedRoots.Count -gt 0) {
-    Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_CODE_PATHS' ($trustedRoots -join ';') 'set-node-repl-trusted-code-paths'
+    $trustedCodePaths = $trustedRoots -join ';'
+    if ($BrowserComputerUseOnly) {
+      $existingTrustedCodePaths = Get-TomlTableStringValue $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_CODE_PATHS'
+      $trustedCodePaths = Merge-SemicolonDelimitedValues @($existingTrustedCodePaths, $trustedCodePaths)
+    }
+    Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_CODE_PATHS' $trustedCodePaths 'set-node-repl-trusted-code-paths'
   }
   $browserPluginRoot = Join-Path $MarketplaceRoot 'plugins\browser'
   if (Test-Path -LiteralPath $browserPluginRoot -PathType Container) {
     $browserVersion = Get-PluginVersion $browserPluginRoot
-    $browserServicePath = Join-Path (Split-Path -Parent $MarketplaceRoot) "openai-bundled-cache\browser\$browserVersion\scripts\browser-service.mjs"
+    $browserServicePath = Join-Path $CodexHome "plugins\cache\openai-bundled\browser\$browserVersion\scripts\browser-service.mjs"
     if (Test-Path -LiteralPath $browserServicePath -PathType Leaf) {
-      $trustedServices = '{"browser":"' + ($browserServicePath -replace '\\', '/') + '","sky":"@oai/sky/service"}'
+      $trustedServices = if ($BrowserComputerUseOnly) {
+        $existingTrustedServices = Get-TomlTableStringValue $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_SERVICES'
+        Merge-NodeReplTrustedServices $existingTrustedServices $browserServicePath
+      } else {
+        '{"browser":"' + ($browserServicePath -replace '\\', '/') + '","sky":"@oai/sky/service"}'
+      }
       Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_SERVICES' $trustedServices 'set-node-repl-trusted-services'
     }
   }
@@ -1247,7 +1443,7 @@ function Update-CodexConfig {
 function Test-TomlSyntax {
   param([string]$ConfigPath)
 
-  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  $python = Get-UsablePythonInvocation
   if (-not $python) {
     Write-Log 'warning: python not found; skipping tomllib syntax validation'
     return
@@ -1264,7 +1460,8 @@ tomllib.loads(path.read_text(encoding="utf-8"))
   $temp = Join-Path $env:TEMP ('codex-toml-validate-' + [guid]::NewGuid().ToString('N') + '.py')
   try {
     Write-Utf8NoBom $temp $script
-    & $python.Source $temp $ConfigPath
+    $pythonArguments = @($python.Arguments) + @($temp, $ConfigPath)
+    & $python.Path @pythonArguments
     if ($LASTEXITCODE -ne 0) {
       throw "tomllib validation failed for $ConfigPath"
     }
@@ -1935,12 +2132,41 @@ function Get-CurrentCodexAppServerRuntimeInventory {
   $cuaCandidates = @()
   $localCuaRoot = Join-Path $LocalCodexRoot 'runtimes\cua_node'
   if (Test-Path -LiteralPath $localCuaRoot -PathType Container) {
+    $localCuaFinalRoot = (Get-FinalFileIdentityPath $localCuaRoot).TrimEnd('\')
+    $localCuaFinalPrefix = $localCuaFinalRoot + '\'
     foreach ($directory in @(Get-ChildItem -LiteralPath $localCuaRoot -Directory -ErrorAction SilentlyContinue)) {
       $binRoot = Join-Path $directory.FullName 'bin'
       $node = Join-Path $binRoot 'node.exe'
       $nodeRepl = Join-Path $binRoot 'node_repl.exe'
       if ((Test-FilesMatchByContent $node $packageNode) -and (Test-FilesMatchByContent $nodeRepl $packageNodeRepl)) {
-        $cuaCandidates += [pscustomobject]@{ NodePath = $node; NodeReplPath = $nodeRepl; BinRoot = $binRoot; Priority = 0; LastWriteTime = (Get-Item $node).LastWriteTime }
+        $binFinal = Get-FinalFileIdentityPath $binRoot
+        $nodeFinal = Get-FinalFileIdentityPath $node
+        $nodeReplFinal = Get-FinalFileIdentityPath $nodeRepl
+        if (-not $binFinal.StartsWith($localCuaFinalPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not $nodeFinal.StartsWith($localCuaFinalPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not $nodeReplFinal.StartsWith($localCuaFinalPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+          Write-Log "ignoring CUA runtime that escapes the resolved local runtime root: $($directory.FullName)"
+          continue
+        }
+        if ((Split-Path -Parent $nodeFinal) -ine $binFinal -or (Split-Path -Parent $nodeReplFinal) -ine $binFinal) {
+          Write-Log "ignoring CUA runtime whose node and node_repl do not resolve to the same bin directory: $($directory.FullName)"
+          continue
+        }
+        if ($nodeFinal -match '(?i)[\\/]WindowsApps[\\/]' -or
+            $nodeReplFinal -match '(?i)[\\/]WindowsApps[\\/]' -or
+            $nodeFinal -match '(?i)[\\/]\.plugin-appserver[\\/]' -or
+            $nodeReplFinal -match '(?i)[\\/]\.plugin-appserver[\\/]') {
+          Write-Log "ignoring CUA runtime whose final path is not user-local: $($directory.FullName)"
+          continue
+        }
+        $cuaCandidates += [pscustomobject]@{
+          NodePath = $node
+          NodeReplPath = $nodeRepl
+          BinRoot = $binRoot
+          FinalBinRoot = $binFinal
+          Priority = 0
+          LastWriteTime = (Get-Item $node).LastWriteTime
+        }
       }
     }
   }
@@ -1968,6 +2194,8 @@ function Get-CurrentCodexAppServerRuntimeInventory {
     ReferenceNodePath = $packageNode
     ReferenceNodeReplPath = $packageNodeRepl
     PackageResourcesRoot = $PackageResourcesRoot
+    CuaRuntimeRoot = $localCuaRoot
+    CuaRuntimeFinalRoot = $localCuaFinalRoot
   }
 }
 
@@ -1982,68 +2210,36 @@ function Resolve-ExistingFileProviderPath {
 function Get-FinalFileIdentityPath {
   param([string]$Path)
 
-  $providerPath = Resolve-ExistingFileProviderPath $Path
-  if (-not ('CodexFinalPathResolver' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.ComponentModel;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Win32.SafeHandles;
+  if (-not (Test-Path -LiteralPath $Path)) {
+    throw "required path does not exist: $Path"
+  }
+  $providerPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).ProviderPath)
+  $root = [System.IO.Path]::GetPathRoot($providerPath)
+  if ([string]::IsNullOrWhiteSpace($root)) {
+    throw "unable to determine the path root: $providerPath"
+  }
 
-public static class CodexFinalPathResolver {
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern SafeFileHandle CreateFile(
-    string fileName,
-    uint desiredAccess,
-    FileShare shareMode,
-    IntPtr securityAttributes,
-    FileMode creationDisposition,
-    uint flagsAndAttributes,
-    IntPtr templateFile
-  );
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern uint GetFinalPathNameByHandle(
-    SafeFileHandle file,
-    [Out] StringBuilder filePath,
-    uint filePathSize,
-    uint flags
-  );
-
-  public static string Resolve(string path) {
-    const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
-    using (SafeFileHandle handle = CreateFile(
-      path,
-      0,
-      FileShare.ReadWrite | FileShare.Delete,
-      IntPtr.Zero,
-      FileMode.Open,
-      FILE_FLAG_BACKUP_SEMANTICS,
-      IntPtr.Zero
-    )) {
-      if (handle.IsInvalid) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to open path: " + path);
+  # Resolve every reparse point in the path instead of relying on Add-Type.
+  # The bundled PowerShell runtime used by Codex can intentionally omit its
+  # compiler reference directory, while FileSystemInfo.ResolveLinkTarget is
+  # available in that same runtime and handles junctions and symbolic links.
+  $current = $root
+  $relativePath = $providerPath.Substring($root.Length)
+  foreach ($segment in @($relativePath.Split([char[]]'\', [StringSplitOptions]::RemoveEmptyEntries))) {
+    $current = Join-Path $current $segment
+    $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      if (-not ($item.PSObject.Methods.Name -contains 'ResolveLinkTarget')) {
+        throw "the current PowerShell runtime cannot resolve a reparse point safely: $current"
       }
-      StringBuilder buffer = new StringBuilder(32768);
-      uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
-      if (length == 0 || length >= buffer.Capacity) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to resolve final path: " + path);
+      $resolvedTarget = $item.ResolveLinkTarget($true)
+      if ($null -eq $resolvedTarget) {
+        throw "failed to resolve reparse point target: $current"
       }
-      string result = buffer.ToString();
-      if (result.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) {
-        result = @"\\" + result.Substring(8);
-      } else if (result.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)) {
-        result = result.Substring(4);
-      }
-      return Path.GetFullPath(result);
+      $current = [System.IO.Path]::GetFullPath($resolvedTarget.FullName)
     }
   }
-}
-'@
-  }
-  return [CodexFinalPathResolver]::Resolve($providerPath)
+  return [System.IO.Path]::GetFullPath($current)
 }
 
 function Test-PathMatchesAnyCurrentFile {
@@ -2066,6 +2262,181 @@ function Test-PathMatchesAnyCurrentFile {
     }
   }
   return $false
+}
+
+function Test-CodexManagedCuaRuntimePathShape {
+  param(
+    [string]$Path,
+    [string]$ExpectedLeafName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $false
+  }
+  try {
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+  } catch {
+    return $false
+  }
+  if ((Split-Path -Leaf $fullPath) -ine $ExpectedLeafName) {
+    return $false
+  }
+
+  $managedRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node')).TrimEnd('\') + '\'
+  if (-not $fullPath.StartsWith($managedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    return $false
+  }
+  $relativePath = $fullPath.Substring($managedRoot.Length)
+  return $relativePath -match ('^[^\\]+\\bin\\' + [regex]::Escape($ExpectedLeafName) + '$')
+}
+
+function Test-MissingCodexManagedCuaRuntimePath {
+  param(
+    [string]$Path,
+    [string]$ExpectedLeafName
+  )
+
+  if (Test-Path -LiteralPath $Path) {
+    return $false
+  }
+  return Test-CodexManagedCuaRuntimePathShape $Path $ExpectedLeafName
+}
+
+function Test-ConfiguredNodeReplRuntimePaths {
+  param(
+    [string]$ConfigPath,
+    [object]$RuntimeInventory
+  )
+
+  $commandPath = Get-TomlTableStringValue $ConfigPath '[mcp_servers.node_repl]' 'command'
+  if ([string]::IsNullOrWhiteSpace($commandPath)) {
+    return
+  }
+  $nodePath = Get-TomlTableStringValue $ConfigPath '[mcp_servers.node_repl.env]' 'NODE_REPL_NODE_PATH'
+  if ([string]::IsNullOrWhiteSpace($nodePath)) {
+    throw 'configured mcp_servers.node_repl is missing NODE_REPL_NODE_PATH'
+  }
+  foreach ($entry in @(
+      [pscustomobject]@{ Label = 'command'; Path = $commandPath; Leaf = 'node_repl.exe' },
+      [pscustomobject]@{ Label = 'NODE_REPL_NODE_PATH'; Path = $nodePath; Leaf = 'node.exe' }
+    )) {
+    if (-not (Test-Path -LiteralPath $entry.Path -PathType Leaf)) {
+      throw "configured node_repl $($entry.Label) path is missing: $($entry.Path)"
+    }
+    if ((Split-Path -Leaf $entry.Path) -ine $entry.Leaf) {
+      throw "configured node_repl $($entry.Label) has an unexpected executable name: $($entry.Path)"
+    }
+    $finalPath = Get-FinalFileIdentityPath $entry.Path
+    if ($finalPath -match '(?i)[\\/]WindowsApps[\\/]' -or $finalPath -match '(?i)[\\/]\.plugin-appserver[\\/]') {
+      throw "configured node_repl $($entry.Label) resolves to a protected runtime: $finalPath"
+    }
+  }
+
+  $commandBin = Split-Path -Parent (Get-FinalFileIdentityPath $commandPath)
+  $nodeBin = Split-Path -Parent (Get-FinalFileIdentityPath $nodePath)
+  if ($commandBin -ine $nodeBin) {
+    throw "configured node_repl command and NODE_REPL_NODE_PATH do not resolve to the same bin directory: $commandBin / $nodeBin"
+  }
+
+  $managedRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node')).TrimEnd('\')
+  $logicalCommand = [System.IO.Path]::GetFullPath($commandPath)
+  if ($logicalCommand.StartsWith($managedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    $finalRoot = (Get-FinalFileIdentityPath $managedRoot).TrimEnd('\') + '\'
+    if (-not $commandBin.StartsWith($finalRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      throw "configured node_repl runtime escapes the resolved Codex CUA runtime root: $commandBin"
+    }
+  }
+
+  $isCurrent = (Test-PathMatchesAnyCurrentFile $commandPath @($RuntimeInventory.NodeReplPath)) -and
+    (Test-PathMatchesAnyCurrentFile $nodePath @($RuntimeInventory.NodePath))
+  $profile = if ($isCurrent) { 'current-package-matching' } else { 'existing-noncurrent' }
+  Write-Log "configured node_repl runtime verification ok: profile=$profile bin=$commandBin"
+}
+
+function Repair-ConfiguredNodeReplRuntimePaths {
+  param(
+    [string]$ConfigPath,
+    [object]$RuntimeInventory
+  )
+
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return
+  }
+  $commandPath = Get-TomlTableStringValue $ConfigPath '[mcp_servers.node_repl]' 'command'
+  $nodePath = Get-TomlTableStringValue $ConfigPath '[mcp_servers.node_repl.env]' 'NODE_REPL_NODE_PATH'
+  $migrateCommand = Test-MissingCodexManagedCuaRuntimePath $commandPath 'node_repl.exe'
+  $migrateNode = Test-MissingCodexManagedCuaRuntimePath $nodePath 'node.exe'
+  if (-not $migrateCommand -and -not $migrateNode) {
+    return
+  }
+  if (-not (Test-CodexManagedCuaRuntimePathShape $commandPath 'node_repl.exe') -or
+      -not (Test-CodexManagedCuaRuntimePathShape $nodePath 'node.exe')) {
+    throw "refusing node_repl runtime migration because both paths are not Codex-managed CUA runtime paths: command=$commandPath node=$nodePath"
+  }
+  $commandBin = [System.IO.Path]::GetFullPath((Split-Path -Parent $commandPath))
+  $nodeBin = [System.IO.Path]::GetFullPath((Split-Path -Parent $nodePath))
+  if ($commandBin -ine $nodeBin) {
+    throw "refusing node_repl runtime migration because the retired paths do not share one bin directory: $commandPath / $nodePath"
+  }
+
+  $managedRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node')).TrimEnd('\')
+  $finalManagedRoot = (Get-FinalFileIdentityPath $managedRoot).TrimEnd('\') + '\'
+  if (Test-Path -LiteralPath $commandBin -PathType Container) {
+    $finalOldBin = Get-FinalFileIdentityPath $commandBin
+    if (-not $finalOldBin.StartsWith($finalManagedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $finalOldBin -match '(?i)[\\/]WindowsApps[\\/]' -or
+        $finalOldBin -match '(?i)[\\/]\.plugin-appserver[\\/]') {
+      throw "refusing node_repl runtime migration because the retired bin escapes the resolved Codex CUA runtime root: $finalOldBin"
+    }
+    foreach ($entry in @(
+        [pscustomobject]@{ Label = 'command'; Path = $commandPath },
+        [pscustomobject]@{ Label = 'NODE_REPL_NODE_PATH'; Path = $nodePath }
+      )) {
+      if (-not (Test-Path -LiteralPath $entry.Path)) {
+        continue
+      }
+      if (-not (Test-Path -LiteralPath $entry.Path -PathType Leaf)) {
+        throw "refusing node_repl runtime migration because the retired $($entry.Label) is not a file: $($entry.Path)"
+      }
+      $finalPath = Get-FinalFileIdentityPath $entry.Path
+      if ((Split-Path -Parent $finalPath) -ine $finalOldBin -or
+          -not $finalPath.StartsWith($finalManagedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          $finalPath -match '(?i)[\\/]WindowsApps[\\/]' -or
+          $finalPath -match '(?i)[\\/]\.plugin-appserver[\\/]') {
+        throw "refusing node_repl runtime migration because the retired $($entry.Label) resolves outside its verified bin: $finalPath"
+      }
+    }
+  } elseif (-not $migrateCommand -or -not $migrateNode) {
+    throw "refusing partial node_repl runtime migration because the retired bin is missing while one configured executable still exists: $commandBin"
+  }
+
+  Set-TomlTableKey $ConfigPath '[mcp_servers.node_repl]' 'command' $RuntimeInventory.NodeReplPath 'migrate-retired-node-repl-command'
+  Set-TomlTableKey $ConfigPath '[mcp_servers.node_repl.env]' 'NODE_REPL_NODE_PATH' $RuntimeInventory.NodePath 'migrate-retired-node-repl-node-path'
+  Test-TomlSyntax $ConfigPath
+  Test-ConfiguredNodeReplRuntimePaths $ConfigPath $RuntimeInventory
+  Write-Log "migrated retired node_repl runtime paths: $(Split-Path -Parent $commandPath) -> $(Split-Path -Parent $RuntimeInventory.NodeReplPath)"
+}
+
+function Test-UserCuaRuntimeEnvironment {
+  param([object]$RuntimeInventory)
+
+  if ($SkipUserEnvironment) {
+    Write-Log 'skipping user CUA runtime environment verification'
+    return
+  }
+  foreach ($entry in @(
+      [pscustomobject]@{ Name = 'CODEX_NODE_REPL_PATH'; Expected = $RuntimeInventory.NodeReplPath },
+      [pscustomobject]@{ Name = 'CODEX_BROWSER_USE_NODE_PATH'; Expected = $RuntimeInventory.NodePath }
+    )) {
+    $actual = [Environment]::GetEnvironmentVariable($entry.Name, 'User')
+    if ([string]::IsNullOrWhiteSpace($actual) -or -not (Test-Path -LiteralPath $actual -PathType Leaf)) {
+      throw "user $($entry.Name) is missing or points to a missing runtime: $actual"
+    }
+    if (-not (Test-PathMatchesAnyCurrentFile $actual @($entry.Expected))) {
+      throw "user $($entry.Name) does not match the current package runtime: actual=$actual expected=$($entry.Expected)"
+    }
+  }
+  Write-Log 'user CUA runtime environment verification ok'
 }
 
 function Get-CurrentChromeManifestRoots {
@@ -2874,6 +3245,36 @@ function Sync-BundledMarketplaceFromInstalledApp {
   $parent = Split-Path -Parent $MarketplaceRoot
   Resolve-OrCreateDirectory $parent | Out-Null
   Assert-UnderPath $MarketplaceRoot $parent
+
+  if ($BrowserComputerUseOnly) {
+    $hostRoots = @()
+    foreach ($pluginName in $script:BrowserComputerUsePluginNames) {
+      $hostRoots += @(
+        (Join-Path $SourceRoot "plugins\$pluginName"),
+        (Join-Path $MarketplaceRoot "plugins\$pluginName"),
+        (Join-Path $CodexHome "plugins\cache\openai-bundled\$pluginName"),
+        (Join-Path (Split-Path -Parent $MarketplaceRoot) "openai-bundled-cache\$pluginName")
+      )
+    }
+    Stop-OpenAiBundledExtensionHosts $hostRoots
+
+    foreach ($pluginName in $script:BrowserComputerUsePluginNames) {
+      $sourcePluginRoot = Join-Path $SourceRoot "plugins\$pluginName"
+      $sourceDescriptor = Join-Path $sourcePluginRoot '.codex-plugin\plugin.json'
+      if (-not (Test-Path -LiteralPath $sourceDescriptor -PathType Leaf)) {
+        throw "installed bundled marketplace is missing scoped plugin files: $sourceDescriptor"
+      }
+      $destinationPluginRoot = Join-Path $MarketplaceRoot "plugins\$pluginName"
+      Assert-UnderPath $destinationPluginRoot $MarketplaceRoot
+      if (Test-Path -LiteralPath $destinationPluginRoot) {
+        Remove-ReparsePointOrDirectory $destinationPluginRoot
+      }
+      Copy-DirectoryDataOnly $sourcePluginRoot $destinationPluginRoot
+      Write-Log "synced scoped bundled marketplace plugin: $pluginName"
+    }
+    return
+  }
+
   Stop-OpenAiBundledExtensionHosts @(
     $MarketplaceRoot,
     (Join-Path $CodexHome 'plugins\cache\openai-bundled'),
@@ -2882,6 +3283,132 @@ function Sync-BundledMarketplaceFromInstalledApp {
 
   Write-Log "syncing installed openai-bundled marketplace: $SourceRoot -> $MarketplaceRoot"
   Copy-DirectoryDataOnly $SourceRoot $MarketplaceRoot
+}
+
+function Get-ScopedBundledPluginCriticalFiles {
+  param([string]$PluginName)
+
+  switch ($PluginName) {
+    'browser' {
+      return @('.codex-plugin\plugin.json', 'scripts\browser-service.mjs')
+    }
+    'chrome' {
+      return @(
+        '.codex-plugin\plugin.json',
+        'scripts\extension-ids.json',
+        'scripts\installManifest.mjs',
+        'extension-host\windows\x64\extension-host.exe'
+      )
+    }
+    'computer-use' {
+      return @('.codex-plugin\plugin.json')
+    }
+    default {
+      throw "unsupported scoped bundled plugin: $PluginName"
+    }
+  }
+}
+
+function Test-ScopedBundledPluginDirectoryMatchesInstalledPackage {
+  param(
+    [string]$InstalledMarketplaceRoot,
+    [string]$TargetPluginRoot,
+    [string]$PluginName,
+    [string]$TargetLabel
+  )
+
+  $sourcePluginRoot = Join-Path $InstalledMarketplaceRoot "plugins\$PluginName"
+  $sourceVersion = Get-PluginVersion $sourcePluginRoot
+  if (-not (Test-Path -LiteralPath $TargetPluginRoot -PathType Container)) {
+    throw "scoped bundled plugin directory is missing from ${TargetLabel}: $TargetPluginRoot"
+  }
+  $targetVersion = Get-PluginVersion $TargetPluginRoot
+  if ($targetVersion -ne $sourceVersion) {
+    throw "scoped bundled plugin version drift in ${TargetLabel}: $PluginName installed=$sourceVersion target=$targetVersion"
+  }
+
+  foreach ($relativePath in @(Get-ScopedBundledPluginCriticalFiles $PluginName)) {
+    $sourcePath = Join-Path $sourcePluginRoot $relativePath
+    $targetPath = Join-Path $TargetPluginRoot $relativePath
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+      throw "installed package is missing scoped bundled plugin file: $sourcePath"
+    }
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+      throw "scoped bundled plugin file is missing from ${TargetLabel}: $targetPath"
+    }
+    if (-not (Test-FilesMatchByContent $targetPath $sourcePath)) {
+      throw "scoped bundled plugin file differs from the installed package in ${TargetLabel}: $targetPath"
+    }
+  }
+}
+
+function Test-ScopedBundledMarketplaceCopy {
+  param(
+    [string]$MarketplaceRoot,
+    [string]$InstalledMarketplaceRoot,
+    [string]$Label
+  )
+
+  foreach ($pluginName in $script:BrowserComputerUsePluginNames) {
+    Test-ScopedBundledPluginDirectoryMatchesInstalledPackage `
+      $InstalledMarketplaceRoot `
+      (Join-Path $MarketplaceRoot "plugins\$pluginName") `
+      $pluginName `
+      $Label
+  }
+  Write-Log "scoped bundled marketplace verification ok: $Label"
+}
+
+function Test-ScopedBundledPluginAlignment {
+  param(
+    [string]$CodexHomeResolved,
+    [string]$InstalledMarketplaceRoot,
+    [string]$StableMarketplaceRoot
+  )
+
+  Test-ScopedBundledMarketplaceCopy $StableMarketplaceRoot $InstalledMarketplaceRoot 'stable marketplace'
+  $reservedMarketplaceRoot = Get-ReservedBundledMarketplaceRoot $CodexHomeResolved
+  if (Test-BundledMarketplaceRootUsable $reservedMarketplaceRoot) {
+    Test-ScopedBundledMarketplaceCopy $reservedMarketplaceRoot $InstalledMarketplaceRoot 'reserved marketplace'
+  }
+
+  $pluginList = Get-BundledMarketplacePluginListWithCodexCli -IncludeAvailable
+  $pluginEntries = @($pluginList.installed) + @($pluginList.available)
+  foreach ($pluginName in $script:BrowserComputerUsePluginNames) {
+    $sourcePluginRoot = Join-Path $InstalledMarketplaceRoot "plugins\$pluginName"
+    $version = Get-PluginVersion $sourcePluginRoot
+    $cachePluginRoot = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\$pluginName\$version"
+    Test-ScopedBundledPluginDirectoryMatchesInstalledPackage `
+      $InstalledMarketplaceRoot `
+      $cachePluginRoot `
+      $pluginName `
+      'versioned cache'
+
+    $latestPath = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\$pluginName\latest"
+    if (-not (Test-Path -LiteralPath $latestPath)) {
+      throw "scoped bundled plugin latest junction is missing: $latestPath"
+    }
+    $latestItem = Get-Item -LiteralPath $latestPath -Force
+    if (($latestItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+      throw "scoped bundled plugin latest path is not a junction: $latestPath"
+    }
+    if ((Get-FinalFileIdentityPath $latestPath) -ine (Get-FinalFileIdentityPath $cachePluginRoot)) {
+      throw "scoped bundled plugin latest junction does not target the current package version: $latestPath"
+    }
+
+    $selector = "$pluginName@openai-bundled"
+    $entry = @($pluginEntries | Where-Object { [string]$_.pluginId -eq $selector } | Select-Object -First 1)
+    if ($entry.Count -eq 0) {
+      throw "scoped bundled plugin is missing from Codex CLI inventory: $selector"
+    }
+    if ([string]$entry[0].version -ne $version) {
+      throw "scoped bundled plugin CLI version drift: $selector installed=$version cli=$($entry[0].version)"
+    }
+    if (-not [bool]$entry[0].installed -or -not [bool]$entry[0].enabled) {
+      throw "scoped bundled plugin is not installed and enabled: $selector"
+    }
+  }
+  Write-Log "scoped bundled plugin alignment verification ok: $($script:BrowserComputerUsePluginNames -join ',')"
 }
 
 function Test-FileContainsAsciiText {
@@ -2934,13 +3461,27 @@ function Get-ChromeBrowserClientTrustMode {
   $nativeHostMarkers = @(
     'browserClientPath',
     'browserServicePath',
-    'codex-host-chunked-message-v1',
-    'Chrome native host did not provide a browser-client path'
+    'codex-host-chunked-message-v1'
   )
   foreach ($marker in $nativeHostMarkers) {
     if (-not (Test-FileContainsAsciiText $AppAsarPath $marker)) {
       throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$marker"
     }
+  }
+
+  $browserClientFallbackMarkers = @(
+    'Chrome native host did not provide a browser-client path',
+    'browser-client path discovery or switch to another browser'
+  )
+  $hasBrowserClientFallbackMarker = $false
+  foreach ($marker in $browserClientFallbackMarkers) {
+    if (Test-FileContainsAsciiText $AppAsarPath $marker) {
+      $hasBrowserClientFallbackMarker = $true
+      break
+    }
+  }
+  if (-not $hasBrowserClientFallbackMarker) {
+    throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$($browserClientFallbackMarkers -join ' OR ')"
   }
 
   return 'native-host-paths'
@@ -3054,6 +3595,15 @@ function Test-BundledMarketplaceMirror {
 
   $sourceManifest = Get-Content -Raw -LiteralPath $sourceManifestPath | ConvertFrom-Json
   $localManifest = Get-Content -Raw -LiteralPath $localManifestPath | ConvertFrom-Json
+  $sourceEntries = @($sourceManifest.plugins)
+  if ($BrowserComputerUseOnly) {
+    $sourceEntries = @($sourceEntries | Where-Object { [string]$_.name -in $script:BrowserComputerUsePluginNames })
+    $sourceEntryNames = @($sourceEntries | ForEach-Object { [string]$_.name })
+    $missingScopedEntries = @($script:BrowserComputerUsePluginNames | Where-Object { $_ -notin $sourceEntryNames })
+    if ($missingScopedEntries.Count -gt 0) {
+      throw "installed bundled marketplace is missing scoped plugin entries: $($missingScopedEntries -join ',')"
+    }
+  }
   $localEntries = @{}
   foreach ($entry in @($localManifest.plugins)) {
     $localEntries[[string]$entry.name] = $entry
@@ -3067,7 +3617,7 @@ function Test-BundledMarketplaceMirror {
     $allowedRuntimeOmissions['deep-research'] = $true
   }
 
-  foreach ($sourceEntry in @($sourceManifest.plugins)) {
+  foreach ($sourceEntry in $sourceEntries) {
     $name = [string]$sourceEntry.name
     if (-not $localEntries.ContainsKey($name)) {
       $sourceRelativePath = ([string]$sourceEntry.source.path) -replace '^[.][\/]', ''
@@ -3123,7 +3673,7 @@ function Test-CodexConfig {
   $expectedSource = '\\?\' + $MarketplaceRoot
   $reservedRoot = Get-ReservedBundledMarketplaceRoot (Resolve-OrCreateDirectory $CodexHome)
   $reservedSource = if (Test-BundledMarketplaceRootUsable $reservedRoot) { '\\?\' + $reservedRoot } else { $expectedSource }
-  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  $python = Get-UsablePythonInvocation
   if (-not $python) {
     $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
     if ($content -notmatch '(?ms)^\[marketplaces\.openai-bundled\]\s*\r?\n(?:(?!^\[).)*source_type\s*=\s*[''"]local[''"]') {
@@ -3141,6 +3691,9 @@ function Test-CodexConfig {
     if ($content -notmatch '(?ms)^\[windows\]\s*\r?\n(?:(?!^\[).)*sandbox\s*=\s*[''"]unelevated[''"]') {
       throw 'config.toml is missing windows.sandbox=unelevated'
     }
+    if ($BrowserComputerUseOnly -and $content -notmatch '(?ms)^\[features\]\s*\r?\n(?:(?!^\[).)*computer_use\s*=\s*true') {
+      throw 'config.toml is missing features.computer_use=true'
+    }
     $pipeState = Get-ComputerUsePipeConfigState $ConfigPath
     if ($pipeState.Present -and -not $pipeState.Active) {
       throw 'config.toml contains stale SKY_CUA_NATIVE_PIPE environment override'
@@ -3155,7 +3708,8 @@ import sys
 import tomllib
 
 config_path = pathlib.Path(sys.argv[1])
-expected_sources = [source for source in sys.argv[2:] if source]
+expected_sources = [source for source in sys.argv[2:4] if source]
+require_computer_use_feature = sys.argv[4] == "1"
 data = tomllib.loads(config_path.read_text(encoding="utf-8"))
 errors = []
 
@@ -3190,6 +3744,13 @@ if not isinstance(windows, dict):
 elif windows.get("sandbox") != "unelevated":
     errors.append('windows.sandbox must be "unelevated"')
 
+if require_computer_use_feature:
+    features = data.get("features", {})
+    if not isinstance(features, dict):
+        errors.append("missing [features]")
+    elif features.get("computer_use") is not True:
+        errors.append("features.computer_use must be true")
+
 node_repl_env = data.get("mcp_servers", {}).get("node_repl", {}).get("env", {})
 if isinstance(node_repl_env, dict):
     pipe_enabled = node_repl_env.get("SKY_CUA_NATIVE_PIPE")
@@ -3210,7 +3771,15 @@ if errors:
   $temp = Join-Path $env:TEMP ('codex-config-validate-' + [guid]::NewGuid().ToString('N') + '.py')
   try {
     Write-Utf8NoBom $temp $script
-    & $python.Source $temp $ConfigPath $expectedSource $reservedSource
+    $requireComputerUseFeature = if ($BrowserComputerUseOnly) { '1' } else { '0' }
+    $pythonArguments = @($python.Arguments) + @(
+      $temp,
+      $ConfigPath,
+      $expectedSource,
+      $reservedSource,
+      $requireComputerUseFeature
+    )
+    & $python.Path @pythonArguments
     if ($LASTEXITCODE -ne 0) {
       throw "semantic config validation failed for $ConfigPath"
     }
@@ -3413,17 +3982,41 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
 function Test-ComputerUseRuntimeImport {
   param([string]$SkyRoot)
 
-  $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $node) {
-    throw 'node.exe not found; cannot verify the independent Computer Use runtime import'
-  }
-
   $entryPath = Join-Path $SkyRoot 'dist\project\cua\sky_js\src\index.js'
   if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
     throw "independent Computer Use runtime entry is missing: $entryPath"
   }
 
+  $packagePath = Join-Path $SkyRoot 'package.json'
+  if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+    throw "independent Computer Use runtime package is missing: $packagePath"
+  }
+  $package = Get-Content -Raw -LiteralPath $packagePath | ConvertFrom-Json
+  $serviceExport = $package.exports.'./service'
+  if ($serviceExport -isnot [string] -or [string]::IsNullOrWhiteSpace($serviceExport)) {
+    throw "independent Computer Use runtime has no supported ./service export: $packagePath"
+  }
+  $serviceRelativePath = $serviceExport.Replace('/', '\').TrimStart('.', '\')
+  $servicePath = [System.IO.Path]::GetFullPath((Join-Path $SkyRoot $serviceRelativePath))
+  $skyPrefix = [System.IO.Path]::GetFullPath($SkyRoot).TrimEnd('\') + '\'
+  if (-not $servicePath.StartsWith($skyPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "independent Computer Use service export escapes the @oai/sky package: $serviceExport"
+  }
+  if (-not (Test-Path -LiteralPath $servicePath -PathType Leaf)) {
+    throw "independent Computer Use service entry is missing: $servicePath"
+  }
+
+  $runtimeBinRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $SkyRoot))
+  $nodePath = Join-Path $runtimeBinRoot 'node.exe'
+  if (-not (Test-Path -LiteralPath $nodePath -PathType Leaf)) {
+    throw "independent Computer Use runtime node.exe is missing: $nodePath"
+  }
+
   $script = @'
+const serviceMod = await import(process.argv[3]);
+if (typeof serviceMod.handleRpc !== "function") {
+  throw new Error("sky service handleRpc export is missing");
+}
 globalThis.nodeRepl = {
   config: {},
   nativePipe: {},
@@ -3432,6 +4025,12 @@ globalThis.nodeRepl = {
       process.env.NODE_REPL_NODE_MODULE_DIRS ?? process.env.NODE_PATH ?? "",
   },
   notify: () => {},
+  rpc: async (service, request) => {
+    if (service !== "sky") {
+      throw new Error(`unexpected trusted service: ${service}`);
+    }
+    return await serviceMod.handleRpc(request);
+  },
 };
 const mod = await import(process.argv[2]);
 if (typeof mod.sky !== "object" || mod.sky === null) {
@@ -3447,16 +4046,18 @@ if (!Array.isArray(windows)) {
 console.log(JSON.stringify({
   ok: true,
   exports: Object.keys(mod).sort(),
+  transport: "trusted-service-rpc",
   method: "list_windows",
   resultType: "array",
   count: windows.length,
 }));
 '@
   $entryUri = ([Uri]$entryPath).AbsoluteUri
+  $serviceUri = ([Uri]$servicePath).AbsoluteUri
   $temp = Join-Path $env:TEMP ('codex-computer-use-runtime-import-' + [guid]::NewGuid().ToString('N') + '.mjs')
   try {
     Write-Utf8NoBom $temp $script
-    $output = & $node.Source $temp $entryUri
+    $output = & $nodePath $temp $entryUri $serviceUri
     if ($LASTEXITCODE -ne 0) {
       throw "independent Computer Use runtime import verification failed for $entryPath"
     }
@@ -3576,14 +4177,36 @@ function Install-ComputerUse {
   Remove-StaleChromeNativeHostEntries
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
   $trustedChromeBrowserClient = Get-InstalledChromeBrowserClientTrust $installedMarketplaceRoot
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
   Sync-BundledMarketplaceFromInstalledApp $marketplaceRoot $installedMarketplaceRoot
   Repair-ComputerUseNodeReplContext
   Patch-ChromeWindowsRegistryParsing (Join-Path $marketplaceRoot 'plugins\chrome') $trustedChromeBrowserClient
   Write-PluginTree $pluginSourceRoot
   Update-BundledMarketplaceManifest $marketplaceRoot
-  Update-CodexConfig $marketplaceRoot
-  Enable-UserEnvironment $marketplaceRoot
 
+  $reservedMarketplaceRoot = Get-ReservedBundledMarketplaceRoot $codexHomeResolved
+  if ($BrowserComputerUseOnly -and
+      [System.IO.Path]::GetFullPath($reservedMarketplaceRoot) -ne [System.IO.Path]::GetFullPath($marketplaceRoot)) {
+    Sync-BundledMarketplaceFromInstalledApp $reservedMarketplaceRoot $installedMarketplaceRoot
+    Patch-ChromeWindowsRegistryParsing (Join-Path $reservedMarketplaceRoot 'plugins\chrome') $trustedChromeBrowserClient
+    Write-PluginTree (Join-Path $reservedMarketplaceRoot 'plugins\computer-use')
+    Update-BundledMarketplaceManifest $reservedMarketplaceRoot
+  }
+
+  Test-ScopedBundledMarketplaceCopy $marketplaceRoot $installedMarketplaceRoot 'stable marketplace'
+  if (Test-BundledMarketplaceRootUsable $reservedMarketplaceRoot) {
+    Test-ScopedBundledMarketplaceCopy $reservedMarketplaceRoot $installedMarketplaceRoot 'reserved marketplace'
+  }
+  Update-CodexConfig $marketplaceRoot
+  Repair-ConfiguredNodeReplRuntimePaths (Join-Path $codexHomeResolved 'config.toml') $runtimeInventory
+
+  # Register browser only after both the stable and reserved marketplace roots
+  # expose the current package version. The CLI otherwise repopulates the cache
+  # from a stale reserved descriptor and silently rolls a successful sync back.
+  Install-BundledMarketplacePluginWithCodexCli 'browser'
+
+  # The installed package is the final cache writer. This prevents both the CLI
+  # registration above and Desktop reconciliation from leaving an older cache.
   $computerUseCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'computer-use'
   Write-PluginTree $computerUseCacheRoot
   $browserCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'browser'
@@ -3593,26 +4216,28 @@ function Install-ComputerUse {
   )
   $chromeCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'chrome'
   Patch-ChromeWindowsRegistryParsing $chromeCacheRoot $trustedChromeBrowserClient
-  $sitesInstalled = Test-BundledMarketplacePluginInstalledWithCodexCli 'sites'
-  if ($sitesInstalled -and (Test-BundledMarketplacePluginAvailable $installedMarketplaceRoot 'sites')) {
-    $sitesCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'sites'
-    Write-Log "refreshed existing optional plugin cache: $sitesCacheRoot"
+  if (-not $BrowserComputerUseOnly) {
+    $sitesInstalled = Test-BundledMarketplacePluginInstalledWithCodexCli 'sites'
+    if ($sitesInstalled -and (Test-BundledMarketplacePluginAvailable $installedMarketplaceRoot 'sites')) {
+      $sitesCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'sites'
+      Write-Log "refreshed existing optional plugin cache: $sitesCacheRoot"
+    }
   }
 
-  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
   Invoke-ChromeOfficialManifestInstall $chromeCacheRoot $runtimeInventory
   Update-ChromeNativeHostV2State $chromeCacheRoot $runtimeInventory $codexHomeResolved
 
   # Desktop can reconcile the mutable mirror while caches are being copied.
   # Re-merge shipped descriptors immediately before final verification.
   Update-BundledMarketplaceManifest $marketplaceRoot
+  if (Test-BundledMarketplaceRootUsable $reservedMarketplaceRoot) {
+    Update-BundledMarketplaceManifest $reservedMarketplaceRoot
+  }
   Update-CodexConfig $marketplaceRoot
-
-  # A cache plus a hand-written enabled entry is not an installed plugin to the
-  # current CLI. Browser is part of this repair; unrelated optional plugins keep
-  # their existing installed/enabled state.
-  Install-BundledMarketplacePluginWithCodexCli 'browser'
-  Update-CodexConfig $marketplaceRoot
+  Enable-UserEnvironment $marketplaceRoot $runtimeInventory
+  Test-ConfiguredNodeReplRuntimePaths (Join-Path $codexHomeResolved 'config.toml') $runtimeInventory
+  Test-UserCuaRuntimeEnvironment $runtimeInventory
+  Test-ScopedBundledPluginAlignment $codexHomeResolved $installedMarketplaceRoot $marketplaceRoot
 
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
   Write-Log "installed cached plugin: $computerUseCacheRoot"
@@ -3626,6 +4251,10 @@ function Test-ComputerUse {
   $installedChromeVersion = Get-PluginVersion $installedChromeRoot
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"
   $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  $stableMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+  Test-ScopedBundledPluginAlignment $codexHomeResolved $installedMarketplaceRoot $stableMarketplaceRoot
+  Test-ConfiguredNodeReplRuntimePaths (Join-Path $codexHomeResolved 'config.toml') $runtimeInventory
+  Test-UserCuaRuntimeEnvironment $runtimeInventory
   Test-ChromeNativeMessagingManifest $installedChromeCacheRoot
   Test-ChromeAppServerHostConfig $installedChromeCacheRoot $runtimeInventory
   Test-ChromeNativeHostV2State $installedChromeCacheRoot $runtimeInventory $codexHomeResolved
@@ -3666,8 +4295,11 @@ function Test-ComputerUse {
   $browserPluginRoot = Join-Path $marketplaceRoot 'plugins\browser'
   $chromePluginRoot = Join-Path $marketplaceRoot 'plugins\chrome'
   $sitesPluginRoot = Join-Path $marketplaceRoot 'plugins\sites'
-  $sitesInstalled = (Test-BundledMarketplacePluginAvailable $marketplaceRoot 'sites') -and
-    (Test-BundledMarketplacePluginInstalledWithCodexCli 'sites')
+  $sitesInstalled = $false
+  if (-not $BrowserComputerUseOnly) {
+    $sitesInstalled = (Test-BundledMarketplacePluginAvailable $marketplaceRoot 'sites') -and
+      (Test-BundledMarketplacePluginInstalledWithCodexCli 'sites')
+  }
   $browserVersion = Get-PluginVersion $browserPluginRoot
   $chromeVersion = Get-PluginVersion $chromePluginRoot
   $browserCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\browser\latest'

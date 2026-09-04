@@ -116,6 +116,19 @@ try {
     throw "current Browser sidebar fixture was not idempotent: exit=$LASTEXITCODE output=$($secondOutput -join ' | ')"
   }
 
+  $reactCompilerSource = 'const DPr={"browser.in-app":{configFeatures:[{key:`in_app_browser`,host:`default`}],supportedClients:[`electron`]}};function available(gj,a){let o=hs(gj,a).isCapable,s=Px(`410262010`),reason=(computed,`available`)/*CODEX_BROWSER_IN_APP_RESULT_V3*/;return{allowed:reason===`available`,available:reason===`available`,isLoading:reason===`loading`,reason}}'
+  $reactCompiler = Invoke-PatcherFixture -Name 'codex-26-831-result-override' -Source $reactCompilerSource -ExpectedExitCode 0
+  if ($reactCompiler.Output -cne 'already-patched') {
+    throw "React Compiler Browser sidebar fixture did not remain already-patched: $($reactCompiler.Output)"
+  }
+  $reactCompilerPatched = [System.IO.File]::ReadAllText($reactCompiler.AssetPath)
+  if ($reactCompilerPatched -cne $reactCompilerSource) {
+    throw 'React Compiler Browser sidebar fixture changed despite the V3 result override'
+  }
+  if (-not $reactCompilerPatched.Contains('o=hs(gj,a).isCapable,s=Px(`410262010`)')) {
+    throw 'React Compiler Browser sidebar fixture removed the capability or Statsig hook call'
+  }
+
   $negativeSource = 'const in_app_browser=true;const unrelated=()=>!0;'
   $negative = Invoke-PatcherFixture -Name 'unrelated-true-callback' -Source $negativeSource -ExpectedExitCode 2
   if ($negative.Output -cne 'browser-sidebar-availability-patch-target-not-found') {

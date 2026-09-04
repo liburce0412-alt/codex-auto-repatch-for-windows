@@ -57,6 +57,14 @@ try {
   )
   Assert-Equal (Get-ChromeBrowserClientTrustMode $nativeAsar $sha256) 'native-host-paths' 'native-host path contract was not detected'
 
+  $currentNativeAsar = Join-Path $fixture 'current-native.asar'
+  [IO.File]::WriteAllText(
+    $currentNativeAsar,
+    'browserClientPath browserServicePath codex-host-chunked-message-v1 browser-client path discovery or switch to another browser',
+    [Text.Encoding]::ASCII
+  )
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $currentNativeAsar $sha256) 'native-host-paths' 'current native-host path contract was not detected'
+
   foreach ($content in @(
     'browserClientPath browserServicePath codex-host-chunked-message-v1',
     'unknown browser runtime contract'

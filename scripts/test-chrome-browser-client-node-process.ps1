@@ -88,12 +88,18 @@ $trustMode = if (Test-FileContainsAsciiText $appAsar $installedHash) {
   foreach ($marker in @(
     'browserClientPath',
     'browserServicePath',
-    'codex-host-chunked-message-v1',
-    'Chrome native host did not provide a browser-client path'
+    'codex-host-chunked-message-v1'
   )) {
     if (-not (Test-FileContainsAsciiText $appAsar $marker)) {
       throw "installed app.asar contains neither the packaged browser-client hash nor the complete native-host path contract: missing=$marker"
     }
+  }
+  $fallbackMarkers = @(
+    'Chrome native host did not provide a browser-client path',
+    'browser-client path discovery or switch to another browser'
+  )
+  if (-not @($fallbackMarkers | Where-Object { Test-FileContainsAsciiText $appAsar $_ })) {
+    throw "installed app.asar contains neither the packaged browser-client hash nor the complete native-host path contract: missing=$($fallbackMarkers -join ' OR ')"
   }
   'native-host-paths'
 }
