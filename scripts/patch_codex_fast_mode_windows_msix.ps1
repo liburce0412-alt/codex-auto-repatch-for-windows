@@ -102,9 +102,13 @@ function Test-CodexAppPath {
     return $false
   }
   $app = Normalize-AppPath $Candidate
+  # The Electron launcher name is build-dependent: Codex.exe before 26.9xx, ChatGPT.exe after.
+  # Accept either so a renamed launcher does not make a valid package undiscoverable.
+  $hasLauncher = (Test-Path -LiteralPath (Join-Path $app 'ChatGPT.exe') -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $app 'Codex.exe') -PathType Leaf)
   return (
     (Test-Path -LiteralPath $app -PathType Container) -and
-    (Test-Path -LiteralPath (Join-Path $app 'Codex.exe') -PathType Leaf) -and
+    $hasLauncher -and
     (Test-Path -LiteralPath (Join-Path $app 'resources\app.asar') -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $app 'resources\rg.exe') -PathType Leaf)
   )
@@ -823,6 +827,14 @@ const visibilityPatterns = [
     modelGroup: 2,
     isReturn: true,
   },
+  {
+    // 0.6.24+ inserts a `hasConfiguredModelCatalog&&!model.hidden||` disjunct
+    // ahead of the useHiddenModels ternary and wraps that ternary in one more
+    // paren layer.
+    re: /return ([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\2\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!\2\.hidden\|\|\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\)\}/,
+    modelGroup: 2,
+    isReturn: true,
+  },
 ];
 const target = visibilityPatterns
   .map(({ re, modelGroup, isReturn }) => ({ match: text.match(re), modelGroup, isReturn }))
@@ -923,37 +935,60 @@ const [, mutationFn, mutationScope, enabled, snapshot, userSettingsQuery, previo
 const mutationReplacement = `async function ${mutationFn}(${mutationScope},${enabled}){let ${snapshot}=${mutationScope}.query.snapshot(${userSettingsQuery}),${previous}=${snapshot}.getData();${snapshot}.setData(${cached}=>${cached}==null?${cached}:{...${cached},ultraEffortEnabled:${enabled}});if(${previous}?.ultraEffortLocalFallback===!0){try{await ${writeConfig}(${mutationScope},${settings}.showUltraInModelPickerSlider,${enabled});return}catch(codexUltraLocalError){throw ${snapshot}.setData(${previous}),codexUltraLocalError}}try{await ${mutationScope}.get(${client}).setUltraEffortEnabled(${enabled}),await Promise.all([${snapshot}.invalidate(),${mutationScope}.query.snapshot(${tppQuery}).invalidate()])}catch(codexUltraRemoteError){throw ${snapshot}.setData(${previous}),codexUltraRemoteError}}`;
 let next = text.replace(mutationRe, mutationReplacement);
 
-const queryKey = 'queryKey:[`chatgpt-user-settings`,';
-const queryKeyIndex = next.indexOf(queryKey);
-if (queryKeyIndex < 2 ||
-    next.indexOf(queryKey, queryKeyIndex + queryKey.length) >= 0 ||
-    next.slice(queryKeyIndex - 2, queryKeyIndex) !== '},') {
+// 0.6.24+ moves the conversation client behind a dynamic import inside the
+// queryFn and adds keys (chatTheme) to the returned object, so tolerate an
+// arbitrary prologue and any number of extra keys. The whole success body is
+// captured verbatim and re-emitted inside the try, which keeps every returned
+// field intact instead of rebuilding the object from named groups.
+// 26.831+ adds settings keys both before lockdownModeEnabled and after
+// ultraEffortEnabled, so locate the userSettings queryFn by anchor, capture its
+// whole body with brace matching, and re-emit it verbatim inside the try. The
+// enumerated-key regex stays below as a fallback for older build shapes.
+let queryPatched = false;
+{
+  const anchor = '.userSettings());';
+  let probe = 0;
+  for (;;) {
+    const anchorIdx = next.indexOf(anchor, probe);
+    if (anchorIdx < 0) break;
+    const windowStart = next.lastIndexOf('queryFn:async()=>{', anchorIdx);
+    if (windowStart < 0) break;
+    if (anchorIdx - windowStart >= 4000) {
+      probe = anchorIdx + anchor.length;
+      continue;
+    }
+    const bodyStart = windowStart + 'queryFn:async()=>{'.length;
+    let depth = 1;
+    let i = bodyStart;
+    while (i < next.length && depth > 0) {
+      const ch = next[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const bodyEnd = i - 1;
+      const successBody = next.slice(bodyStart, bodyEnd);
+      if (successBody.includes('model_picker_persists_ultra_effort')) {
+        const queryReplacement = `queryFn:async()=>{try{${successBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+        next = next.slice(0, windowStart) + queryReplacement + next.slice(bodyEnd + 1);
+        queryPatched = true;
+      }
+    }
+    break;
+  }
+}
+if (!queryPatched) {
+const queryRe = /queryFn:async\(\)=>\{(let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{(?:[$A-Za-z_][$\w]*:[^,]+,)*?lockdownModeEnabled:\2\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\2\.settings\?\.model_picker_persists_ultra_effort===!0\})\}/;
+const queryMatch = next.match(queryRe);
+if (!queryMatch) {
   process.stderr.write('ultra-user-settings-query-target-not-found\n');
   process.exit(2);
 }
-const queryFnPrefix = 'queryFn:async()=>{';
-const queryFnIndex = next.lastIndexOf(queryFnPrefix, queryKeyIndex);
-if (queryFnIndex < 0) {
-  process.stderr.write('ultra-user-settings-query-target-not-found\n');
-  process.exit(2);
+const querySuccessBody = queryMatch[1];
+const queryReplacement = `queryFn:async()=>{try{${querySuccessBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+next = next.replace(queryRe, queryReplacement);
 }
-const queryBodyStart = queryFnIndex + queryFnPrefix.length;
-const queryBodyEnd = queryKeyIndex - 2;
-const queryBody = next.slice(queryBodyStart, queryBodyEnd);
-const userSettingsCalls = queryBody.match(/\.userSettings\(\)/g) ?? [];
-const hasKnownChatTheme = queryBody.includes('.settings?.chat_theme??`default`');
-if (queryBody.length === 0 || queryBody.length > 4096 ||
-    userSettingsCalls.length !== 1 || !queryBody.includes('return{') ||
-    !queryBody.includes('.settings?.lockdown_mode_enabled===!0') ||
-    !queryBody.includes('.settings?.model_picker_persists_ultra_effort===!0') ||
-    !queryBody.includes('ultraEffortEnabled:') ||
-    (queryBody.includes('chatTheme:') && !hasKnownChatTheme)) {
-  process.stderr.write('ultra-user-settings-query-target-not-found\n');
-  process.exit(2);
-}
-const chatThemeFallback = hasKnownChatTheme ? 'chatTheme:`default`,' : '';
-const wrappedQueryBody = `try{${queryBody}}catch{return{${chatThemeFallback}lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}`;
-next = next.slice(0, queryBodyStart) + wrappedQueryBody + next.slice(queryBodyEnd);
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
 const migrationKeyIndex = next.indexOf(migrationKey);
@@ -1137,6 +1172,11 @@ if (!nextSlash.includes(slashPatched) && !slashPatchedRe.test(nextSlash)) {
     changedSlash = true;
   } else if (cmdkSlashRe.test(nextSlash) && (cmdkKeywordSearchRe.test(nextSlash) || nextSlash.includes('keywords:r'))) {
     // Codex 26.519+ moved slash filtering to cmdk keywords; command id matching is already handled there.
+  } else if (nextSlash.includes('requiresEmptyComposer') &&
+             /\w\.getSearchQuery\?\.\(/.test(nextSlash) &&
+             /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
+    // Codex 26.831+ splits the command registry (app-primary) from the unified scorer (app-initial);
+    // the scorer already matches command ids and search aliases, so /goal is searchable by id.
   } else if (nextSlash.includes('id:`goal`') &&
              nextSlash.includes('getSearchQuery') &&
              /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
@@ -1207,7 +1247,13 @@ function patchComputerUseAvailability(file) {
     '$1$2={enabled:!0,isLoading:!1},'
   );
 
-  if (after === before && !/featureName:`computer_use`[^;]+;let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\},/.test(before)) {
+  // The browser-use patch runs first and its inAppConfigV3 replacement already rewrites this
+  // same declaration, appending a /*CODEX_BROWSER_IN_APP_CONFIG_V3*/ marker between the object
+  // literal and the following comma. So on a re-patch of an already-patched package the second
+  // replace above has nothing left to do and the witness must tolerate that marker, otherwise
+  // a correctly patched build is reported as target-not-found.
+  const availabilityPatchedRe = /featureName:`computer_use`[^;]+;let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\}(?:\/\*[^*]*\*\/)?,/;
+  if (after === before && !availabilityPatchedRe.test(before)) {
     process.stderr.write('computer-use-availability-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1369,11 +1415,23 @@ function patchFeatureHook(file) {
     'CODEX_BROWSER_IN_APP_RESULT_V3',
     'CODEX_BROWSER_EXTERNAL_RESULT_V3'
   ];
+  // 26.831+ splits each browser_use feature hook across several let statements
+  // with React-compiler memo-cache blocks in between, so the hook result, the
+  // WSL read, and the derived availability vars no longer sit in one let chain.
+  // Match the two split declarations by their stable neighbor expressions and
+  // force the WSL availability result separately.
+  const inAppConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod\?\?null,([A-Za-z_$][\w$]*);)/;
+  const externalConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*===`chrome-extension`,)/;
+  const wslResultV3Re = /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*===!0\|\|[A-Za-z_$][\w$]*\.kind===`wsl`/g;
+  const v3ConfigPatched = before.includes('/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') &&
+                          before.includes('/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/');
+  const v3ConfigOriginal = inAppConfigV3OriginalRe.test(before) &&
+                           externalConfigV3OriginalRe.test(before);
   if (hasCurrentCompiledShape && !hasReactCompilerAvailabilityShape && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
-      !(currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) ||
+      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
-      !(currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)))) {
+      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched))) {
     process.stderr.write('browser-use-current-feature-hook-incomplete\n');
     process.exit(2);
   }
@@ -1394,6 +1452,18 @@ function patchFeatureHook(file) {
     after = after.replace(
       currentExternalConfigOriginalRe,
       'let $1={enabled:!0,isLoading:!1},$2=!1,$3=$4($5),$6=!1,$7;/*CODEX_BROWSER_EXTERNAL_CONFIG_V2*/'
+    );
+    after = after.replace(
+      inAppConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      externalConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      wslResultV3Re,
+      '$1=!1/*CODEX_BROWSER_WSL_RESULT_V3*/'
     );
   }
 
@@ -1456,7 +1526,8 @@ function patchFeatureHook(file) {
       !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
       !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before) &&
       !currentCompiledMarkers.every(marker => before.includes(marker)) &&
-      !reactCompilerMarkers.every(marker => before.includes(marker))) {
+      !reactCompilerMarkers.every(marker => before.includes(marker)) &&
+      !v3ConfigPatched) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1482,18 +1553,47 @@ function patchSidebarAvailability(file) {
     /([A-Za-z_$][\w$]*)=`in_app_browser`,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\(\{get:[A-Za-z_$][\w$]*\}\)=>\{let\{data:([A-Za-z_$][\w$]*)\}=[\s\S]*?,[A-Za-z_$][\w$]*=\5\?\.find\([A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*\.name===\1\);return \5!=null&&[A-Za-z_$][\w$]*\?\.enabled!==!1\}\)/,
     '$1=`in_app_browser`,$2=$3($4,()=>!0)'
   );
-  if (!before.includes('CODEX_BROWSER_IN_APP_RESULT_V3')) {
+  const reactCompilerSidebarPatched = before.includes('CODEX_BROWSER_IN_APP_RESULT_V3');
+  if (!reactCompilerSidebarPatched) {
     after = after.replace(
       /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\.isCapable,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/,
       '$1=!0,$5=($6(`410262010`),!0)/*CODEX_BROWSER_IN_APP_GATES_V2*/'
     );
   }
+  // 0.6.24+ prefixes the capability entry with accessPolicy, and on some builds
+  // the `410262010` statsig literal no longer sits next to the isCapable read,
+  // so anchor on the capability table instead. Strip every requirement key
+  // rather than just configFeatures: the capability atom short-circuits to
+  // isCapable:!0 only when the whole requirement list comes out empty.
+  const modernCapabilityPattern = /("browser\.in-app":\{)(?:accessPolicy:`[\w-]+`,|configFeatures:\[\{key:`in_app_browser`,host:`default`\}\],)+/;
+  // Leave an `in_app_browser` marker behind. In the shipped bundle that literal
+  // occurs exactly once -- inside the configFeatures entry being stripped -- and
+  // both the entry guard above and the target-file discovery in
+  // patch_codex_fast_mode_windows_msix.ps1 key on it, so a bare strip would make
+  // this patcher unable to find its own target on a second run.
+  const modernCapabilityMarker = '/*in_app_browser CODEX_BROWSER_IN_APP_GATES_V2*/';
+  const modernCapabilityPatched = before.includes('"browser.in-app":{' + modernCapabilityMarker);
+  const beforeModernCapability = after;
+  if (!reactCompilerSidebarPatched) {
+    after = after.replace(modernCapabilityPattern, '$1' + modernCapabilityMarker);
+    if (after === beforeModernCapability && !modernCapabilityPatched) {
+      after = after.replace(
+        // The capability-read helper is renamed by the minifier on every release,
+        // so match any identifier rather than a fixed one.
+        /(name:`browser\.in-app`[\s\S]{0,1800}?)(let|var) ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,/g,
+        '$1$2 $3=!0,'
+      );
+    }
+  }
+  const modernSidebarPatched = reactCompilerSidebarPatched || modernCapabilityPatched ||
+    /name:`browser\.in-app`[\s\S]{0,1800}?(?:let|var) [A-Za-z_$][\w$]*=!0,/.test(before);
   if (after === before &&
        !before.includes('a=t(n,()=>!0)') &&
        !/`in_app_browser`,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\(\)=>!0\)/.test(before) &&
        !/([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/.test(before) &&
        !before.includes('CODEX_BROWSER_IN_APP_GATES_V2') &&
-       !before.includes('CODEX_BROWSER_IN_APP_RESULT_V3')) {
+       !before.includes('CODEX_BROWSER_IN_APP_RESULT_V3') &&
+       !modernSidebarPatched) {
     process.stderr.write('browser-sidebar-availability-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1709,7 +1809,8 @@ function Test-CustomModelVisibilityExpression {
     'if\([$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\{',
     '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)',
     '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)',
-    'return [$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<catalog>[$A-Za-z_][$\w]*)&&!\k<model>\.hidden\|\|\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\}'
+    'return [$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<catalog>[$A-Za-z_][$\w]*)&&!\k<model>\.hidden\|\|\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\}',
+    '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<hasCatalog>[$A-Za-z_][$\w]*)&&!\k<model>\.hidden\|\|\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)'
   )
   foreach ($pattern in $patterns) {
     if ($Text -match $pattern) {
@@ -2233,6 +2334,17 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'getSearchQuery\?\.' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('requiresEmptyComposer') -and
+          $text.Contains('searchAliases') -and
+          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
+        $goalSlashTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
     Fail 'could not find goal slash-command matcher in extracted assets'
   }
 
@@ -2706,98 +2818,7 @@ function Invoke-PatchAppAsar {
   return $true
 }
 
-function Convert-BytesToHex {
-  param([byte[]]$Bytes)
-  return (($Bytes | ForEach-Object { $_.ToString('x2') }) -join '')
-}
-
-function Get-AsarHeaderSha256 {
-  param([string]$AsarPath)
-  $fs = [System.IO.File]::Open($AsarPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-  try {
-    $pickleHeader = New-Object byte[] 16
-    if ($fs.Read($pickleHeader, 0, 16) -ne 16) {
-      Fail 'could not read asar pickle header'
-    }
-    # Electron hashes the ASAR JSON header, not the outer pickle-size fields.
-    $headerSize = [BitConverter]::ToUInt32($pickleHeader, 12)
-    if ($headerSize -le 0 -or $headerSize -gt ($fs.Length - 16)) {
-      Fail "invalid asar JSON header size: $headerSize"
-    }
-    $headerBytes = New-Object byte[] $headerSize
-    if ($fs.Read($headerBytes, 0, [int]$headerSize) -ne [int]$headerSize) {
-      Fail 'could not read asar header bytes'
-    }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-      return (Convert-BytesToHex $sha.ComputeHash($headerBytes))
-    } finally {
-      $sha.Dispose()
-    }
-  } finally {
-    $fs.Dispose()
-  }
-}
-
-function Update-DesktopExeAsarIntegrity {
-  param(
-    [string]$ExePath,
-    [string]$AsarHash
-  )
-  $exeName = Split-Path -Leaf $ExePath
-  $bytes = [System.IO.File]::ReadAllBytes($ExePath)
-  $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-  $pattern = '\[\{"file":"resources\\\\app\.asar","alg":"SHA256","value":"([0-9a-fA-F]{64})"\}\]'
-  $matches = [regex]::Matches($text, $pattern)
-  if ($matches.Count -eq 0) {
-    if ($text.Contains('app.asar')) {
-      Fail "could not find Electron ASAR integrity JSON inside $exeName"
-    }
-    Write-Log "$exeName ASAR integrity JSON not present; skipping executable integrity update"
-    return
-  }
-  if ($matches.Count -ne 1) {
-    Fail "found multiple Electron ASAR integrity records inside $exeName"
-  }
-  $match = $matches[0]
-  $oldHash = $match.Groups[1].Value
-  if ($oldHash -eq $AsarHash) {
-    Write-Log "$exeName asar integrity already current: $AsarHash"
-    return
-  }
-  $newBytes = [System.Text.Encoding]::ASCII.GetBytes($AsarHash)
-  $pos = $match.Groups[1].Index
-  [Array]::Copy($newBytes, 0, $bytes, $pos, $newBytes.Length)
-  [System.IO.File]::WriteAllBytes($ExePath, $bytes)
-  $updatedText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($ExePath))
-  $updatedMatches = [regex]::Matches($updatedText, $pattern)
-  if ($updatedMatches.Count -ne 1 -or $updatedMatches[0].Groups[1].Value -ine $AsarHash) {
-    Fail "failed to verify the updated Electron ASAR integrity record inside $exeName"
-  }
-  Write-Log "updated $exeName asar integrity: $oldHash -> $AsarHash"
-}
-
-function Get-ManifestDesktopExecutablePath {
-  param([string]$PackageRoot)
-  $manifestPath = Join-Path $PackageRoot 'AppxManifest.xml'
-  [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
-  $applications = @($manifest.Package.Applications.Application)
-  $application = $applications | Where-Object { [string]$_.Id -eq 'App' } | Select-Object -First 1
-  if (-not $application -and $applications.Count -eq 1) {
-    $application = $applications[0]
-  }
-  $relativePath = [string]$application.Executable
-  if ([string]::IsNullOrWhiteSpace($relativePath)) {
-    Fail 'could not resolve the manifest-declared Desktop executable'
-  }
-  $packagePrefix = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\') + '\'
-  $exePath = [System.IO.Path]::GetFullPath((Join-Path $PackageRoot ($relativePath -replace '/', '\')))
-  if (-not $exePath.StartsWith($packagePrefix, [StringComparison]::OrdinalIgnoreCase) -or
-      -not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-    Fail "manifest-declared Desktop executable is invalid or missing: $relativePath"
-  }
-  return $exePath
-}
+. (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
 
 function Get-ManifestPublisher {
   param([string]$WorkPackageRoot)
@@ -3539,12 +3560,14 @@ try {
 
   $patched = Invoke-PatchAppAsar $workApp $sourceApp $tempWork
   $asar = Join-Path $workApp 'resources\app.asar'
-  $exe = Get-ManifestDesktopExecutablePath $workPackageRoot
+  if ($DryRun) {
+    # Surface integrity-host detection during a dry run so an unrecognized table format is
+    # reported before anyone repacks a package that cannot start.
+    Test-AsarIntegrityTargets $workApp | Out-Null
+  }
   if (-not $DryRun) {
-    $asarHash = Get-AsarHeaderSha256 $asar
-    Write-Log "app.asar header sha256: $asarHash"
-    Write-Log "desktop executable for ASAR integrity: $exe"
-    Update-DesktopExeAsarIntegrity $exe $asarHash
+    Write-Log "app.asar header sha256: $(Get-AsarHeaderSha256 $asar)"
+    Update-ElectronAsarIntegrity $workApp
 
     $makeappx = Require-WindowsSdkTool 'makeappx.exe'
     $signtool = Require-WindowsSdkTool 'signtool.exe'

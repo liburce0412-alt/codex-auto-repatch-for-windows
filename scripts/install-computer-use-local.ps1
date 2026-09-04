@@ -3468,6 +3468,11 @@ function Get-ChromeBrowserClientTrustMode {
       throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$marker"
     }
   }
+  $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath 'Chrome native host did not provide a browser-client path') -or
+                              (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser')
+  if (-not $browserClientHintPresent) {
+    throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=browser-client path hint"
+  }
 
   $browserClientFallbackMarkers = @(
     'Chrome native host did not provide a browser-client path',
@@ -3980,58 +3985,31 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
 }
 
 function Test-ComputerUseRuntimeImport {
-  param([string]$SkyRoot)
+  param(
+    [string]$SkyRoot,
+    [string]$CodexCliPath
+  )
+
+  $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $node) {
+    throw 'node.exe not found; cannot verify the independent Computer Use runtime import'
+  }
 
   $entryPath = Join-Path $SkyRoot 'dist\project\cua\sky_js\src\index.js'
   if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
     throw "independent Computer Use runtime entry is missing: $entryPath"
   }
 
-  $packagePath = Join-Path $SkyRoot 'package.json'
-  if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
-    throw "independent Computer Use runtime package is missing: $packagePath"
-  }
-  $package = Get-Content -Raw -LiteralPath $packagePath | ConvertFrom-Json
-  $serviceExport = $package.exports.'./service'
-  if ($serviceExport -isnot [string] -or [string]::IsNullOrWhiteSpace($serviceExport)) {
-    throw "independent Computer Use runtime has no supported ./service export: $packagePath"
-  }
-  $serviceRelativePath = $serviceExport.Replace('/', '\').TrimStart('.', '\')
-  $servicePath = [System.IO.Path]::GetFullPath((Join-Path $SkyRoot $serviceRelativePath))
-  $skyPrefix = [System.IO.Path]::GetFullPath($SkyRoot).TrimEnd('\') + '\'
-  if (-not $servicePath.StartsWith($skyPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "independent Computer Use service export escapes the @oai/sky package: $serviceExport"
-  }
-  if (-not (Test-Path -LiteralPath $servicePath -PathType Leaf)) {
-    throw "independent Computer Use service entry is missing: $servicePath"
-  }
-
-  $runtimeBinRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $SkyRoot))
-  $nodePath = Join-Path $runtimeBinRoot 'node.exe'
-  if (-not (Test-Path -LiteralPath $nodePath -PathType Leaf)) {
-    throw "independent Computer Use runtime node.exe is missing: $nodePath"
-  }
-
+  # Do not define globalThis.nodeRepl here. sky >= 0.6.24 branches three ways on
+  # it: undefined falls back to the standalone create_client(load_options()),
+  # which is exactly what an independent runtime import should exercise; defined
+  # with an rpc function routes every call over that RPC channel; defined without
+  # one throws "sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES" as
+  # soon as a method is touched. The stub removed here was that third shape, so
+  # this verification could never pass on 0.6.24. It only mirrored process.env
+  # values back, so it carried no information the standalone loader cannot read
+  # itself.
   $script = @'
-const serviceMod = await import(process.argv[3]);
-if (typeof serviceMod.handleRpc !== "function") {
-  throw new Error("sky service handleRpc export is missing");
-}
-globalThis.nodeRepl = {
-  config: {},
-  nativePipe: {},
-  env: {
-    NODE_REPL_NODE_MODULE_DIRS:
-      process.env.NODE_REPL_NODE_MODULE_DIRS ?? process.env.NODE_PATH ?? "",
-  },
-  notify: () => {},
-  rpc: async (service, request) => {
-    if (service !== "sky") {
-      throw new Error(`unexpected trusted service: ${service}`);
-    }
-    return await serviceMod.handleRpc(request);
-  },
-};
 const mod = await import(process.argv[2]);
 if (typeof mod.sky !== "object" || mod.sky === null) {
   throw new Error("sky export is missing");
@@ -4046,18 +4024,24 @@ if (!Array.isArray(windows)) {
 console.log(JSON.stringify({
   ok: true,
   exports: Object.keys(mod).sort(),
-  transport: "trusted-service-rpc",
   method: "list_windows",
   resultType: "array",
   count: windows.length,
 }));
 '@
   $entryUri = ([Uri]$entryPath).AbsoluteUri
-  $serviceUri = ([Uri]$servicePath).AbsoluteUri
   $temp = Join-Path $env:TEMP ('codex-computer-use-runtime-import-' + [guid]::NewGuid().ToString('N') + '.mjs')
+  $oldCodexCliPath = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
   try {
     Write-Utf8NoBom $temp $script
-    $output = & $nodePath $temp $entryUri $serviceUri
+    # sky >= 0.6.26 spawns the bundled codex-computer-use.exe helper for
+    # list_windows, and that helper launches `<CODEX_CLI_PATH> app-server`.
+    # Without this env var the helper fails with `failed to launch codex
+    # app-server: program not found` even though the runtime import is healthy.
+    if (-not [string]::IsNullOrWhiteSpace($CodexCliPath)) {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $CodexCliPath, 'Process')
+    }
+    $output = & $node.Source $temp $entryUri
     if ($LASTEXITCODE -ne 0) {
       throw "independent Computer Use runtime import verification failed for $entryPath"
     }
@@ -4065,6 +4049,11 @@ console.log(JSON.stringify({
       Write-Log "runtime import ok: $output"
     }
   } finally {
+    if ($null -eq $oldCodexCliPath) {
+      Remove-Item Env:\CODEX_CLI_PATH -ErrorAction SilentlyContinue
+    } else {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $oldCodexCliPath, 'Process')
+    }
     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
   }
 }
@@ -4072,7 +4061,8 @@ console.log(JSON.stringify({
 function Test-OfficialComputerUseCache {
   param(
     [string]$CodexHomeResolved,
-    [string]$InstalledMarketplaceRoot
+    [string]$InstalledMarketplaceRoot,
+    [string]$CodexCliPath
   )
 
   $sourceRoot = Join-Path $InstalledMarketplaceRoot 'plugins\computer-use'
@@ -4143,7 +4133,7 @@ function Test-OfficialComputerUseCache {
     Test-ComputerUseClientImport $cachedClientPath
     Test-HelperTransport $helperTransportPath $helperCommandPath
   } else {
-    Test-ComputerUseRuntimeImport $runtimeSkyRoot
+    Test-ComputerUseRuntimeImport $runtimeSkyRoot $CodexCliPath
   }
 
   $stableMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
@@ -4278,7 +4268,7 @@ function Test-ComputerUse {
     # Current Codex builds can install a lightweight versioned plugin cache and
     # keep @oai/sky in the independent cua_node runtime. In that supported
     # layout `latest` can be absent or stale and has no usable node_modules.
-    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
+    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot $runtimeInventory.CodexCliPath
     $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
     Test-NodeReplTrustedPathRepair `
       (Join-Path $codexHomeResolved 'config.toml') `
