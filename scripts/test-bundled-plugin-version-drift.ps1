@@ -34,7 +34,8 @@ $stableRoot = Join-Path $fixtureRoot 'stable'
 function Set-FixtureMarketplace {
   param(
     [string]$Root,
-    [string]$Version
+    [string]$Version,
+    [string]$PublicationPolicy
   )
 
   $descriptorRoot = Join-Path $Root 'plugins\fixture\.codex-plugin'
@@ -44,6 +45,9 @@ function Set-FixtureMarketplace {
   $descriptor = [ordered]@{
     name = 'fixture'
     version = $Version
+  }
+  if (-not [string]::IsNullOrWhiteSpace($PublicationPolicy)) {
+    $descriptor['publicationPolicy'] = $PublicationPolicy
   }
   $manifest = [ordered]@{
     name = 'openai-bundled'
@@ -120,8 +124,29 @@ Assert-ThrowsLike {
 Set-FixtureCliVersion '2.0.0'
 $successOutput = @(Test-AllBundledMarketplacePluginsAvailableWithCodexCli $stableRoot $installedRoot 6>&1)
 $successText = ($successOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
-if ($successText -notmatch 'all bundled marketplace plugins are available without changing install state: fixture') {
+if ($successText -notmatch 'all publishable bundled marketplace plugins are available without changing install state: fixture') {
   throw "Matching descriptor versions did not report success: $successText"
 }
+
+# An INTERNAL_ONLY descriptor never reaches the marketplace mirror the CLI reads,
+# so requiring CLI discovery for it fails every build that ships one. The
+# descriptor-set and version comparisons still cover it: both sides are raw
+# copies of the package.
+Set-FixtureMarketplace $installedRoot '2.0.0' 'INTERNAL_ONLY'
+Set-FixtureMarketplace $stableRoot '2.0.0' 'INTERNAL_ONLY'
+$script:FixturePluginList = [pscustomobject]@{ installed = @(); available = @() }
+$withheldOutput = @(Test-AllBundledMarketplacePluginsAvailableWithCodexCli $stableRoot $installedRoot 6>&1)
+$withheldText = ($withheldOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+if ($withheldText -notmatch 'bundled plugins withheld from the marketplace mirror \(INTERNAL_ONLY\): fixture') {
+  throw "An INTERNAL_ONLY descriptor absent from the CLI was not reported as withheld: $withheldText"
+}
+
+# The exemption must be scoped to the policy, not blanket-skip missing plugins.
+Set-FixtureMarketplace $installedRoot '2.0.0'
+Set-FixtureMarketplace $stableRoot '2.0.0'
+$script:FixturePluginList = [pscustomobject]@{ installed = @(); available = @() }
+Assert-ThrowsLike {
+  Test-AllBundledMarketplacePluginsAvailableWithCodexCli $stableRoot $installedRoot
+} '*bundled plugin is not discoverable as installed or available: fixture@openai-bundled*'
 
 Write-Output "Bundled plugin version-drift regression passed: $fixtureRoot"

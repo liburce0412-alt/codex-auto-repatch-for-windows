@@ -1818,6 +1818,38 @@ function Get-BundledMarketplacePluginNames {
   return $pluginNames
 }
 
+function Get-BundledMarketplacePluginPublicationPolicy {
+  param(
+    [string]$MarketplaceRoot,
+    [string]$PluginName
+  )
+
+  # Descriptors marked INTERNAL_ONLY are deliberately withheld from the
+  # marketplace mirror Desktop generates, so the CLI can never offer them.
+  $descriptorPath = Join-Path $MarketplaceRoot "plugins\$PluginName\.codex-plugin\plugin.json"
+  if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+    return ''
+  }
+
+  try {
+    $descriptor = Get-Content -Raw -Encoding UTF8 -LiteralPath $descriptorPath | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    return ''
+  }
+
+  return [string]$descriptor.publicationPolicy
+}
+
+function Test-BundledMarketplacePluginPublishable {
+  param(
+    [string]$MarketplaceRoot,
+    [string]$PluginName
+  )
+
+  $policy = Get-BundledMarketplacePluginPublicationPolicy $MarketplaceRoot $PluginName
+  return -not ($policy -and $policy.Trim() -ieq 'INTERNAL_ONLY')
+}
+
 function Get-BundledMarketplacePluginVersions {
   param(
     [string]$MarketplaceRoot,
@@ -1943,9 +1975,22 @@ function Test-AllBundledMarketplacePluginsAvailableWithCodexCli {
     }
   }
 
+  # The descriptor-set and version checks above compare two raw copies of the
+  # package, so they legitimately cover every descriptor. CLI discovery cannot:
+  # Desktop drops INTERNAL_ONLY descriptors when it builds the marketplace
+  # mirror the CLI actually reads, so requiring them here fails every build that
+  # ships one (26.901.6511.0 ships user-writing 0.1.2 that way).
+  $publishableNames = @($pluginNames | Where-Object {
+    Test-BundledMarketplacePluginPublishable $InstalledMarketplaceRoot $_
+  })
+  $withheldNames = @($pluginNames | Where-Object { $publishableNames -notcontains $_ })
+  if ($withheldNames.Count -gt 0) {
+    Write-Log "bundled plugins withheld from the marketplace mirror (INTERNAL_ONLY): $($withheldNames -join ',')"
+  }
+
   $pluginList = Get-BundledMarketplacePluginListWithCodexCli -IncludeAvailable
   $entries = @($pluginList.installed) + @($pluginList.available)
-  foreach ($pluginName in $pluginNames) {
+  foreach ($pluginName in $publishableNames) {
     $selector = "$pluginName@openai-bundled"
     $availablePlugins = @($entries | Where-Object {
       [string]$_.pluginId -eq $selector
@@ -1975,7 +2020,7 @@ function Test-AllBundledMarketplacePluginsAvailableWithCodexCli {
       throw "bundled plugin has no installable local source: $selector"
     }
   }
-  Write-Log "all bundled marketplace plugins are available without changing install state: $($pluginNames -join ',')"
+  Write-Log "all publishable bundled marketplace plugins are available without changing install state: $($publishableNames -join ',')"
 }
 
 function Sync-OpenAiBundledPluginCache {

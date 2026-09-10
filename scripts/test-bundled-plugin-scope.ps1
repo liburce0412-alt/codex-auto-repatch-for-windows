@@ -67,7 +67,7 @@ if ($availabilityExitCode -ne 0) {
   throw "Bundled plugin availability verification failed: $($availabilityOutput -join [Environment]::NewLine)"
 }
 $availabilityText = ($availabilityOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
-if ($availabilityText -notmatch '(?m)^\[codex-computer-use-local\] all bundled marketplace plugins are available without changing install state:') {
+if ($availabilityText -notmatch '(?m)^\[codex-computer-use-local\] all publishable bundled marketplace plugins are available without changing install state:') {
   throw "Bundled plugin availability verification did not report its read-only success marker: $availabilityText"
 }
 
