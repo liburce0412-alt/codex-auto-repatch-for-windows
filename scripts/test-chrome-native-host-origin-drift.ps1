@@ -80,8 +80,15 @@ $codexCliPath = Join-Path $runtimeRoot 'codex.exe'
 $nodeReplPath = Join-Path $runtimeRoot 'node_repl.exe'
 New-Item -ItemType Directory -Force -Path $script:CodexHome, $scriptsRoot, $hostRoot, $descriptorRoot, $localAppData, $runtimeRoot, $fakeBinRoot | Out-Null
 Copy-Item -LiteralPath $nodeSource -Destination $nodePath -Force
-Copy-Item -LiteralPath $officialInstallerPath -Destination (Join-Path $scriptsRoot 'installManifest.mjs') -Force
-Copy-Item -LiteralPath $officialExtensionIdsPath -Destination (Join-Path $scriptsRoot 'extension-ids.json') -Force
+# Copy bytes without inheriting Store-package encryption attributes into the fixture.
+foreach ($sourcePath in @($officialInstallerPath, $officialExtensionIdsPath)) {
+  $destinationPath = Join-Path $scriptsRoot (Split-Path -Leaf $sourcePath)
+  [System.IO.File]::WriteAllBytes($destinationPath, [System.IO.File]::ReadAllBytes($sourcePath))
+  if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ne
+      (Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256).Hash) {
+    throw "Official Chrome regression input changed during copy: $sourcePath"
+  }
+}
 Set-Content -LiteralPath (Join-Path $hostRoot 'extension-host.exe') -Value 'fixture host' -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $scriptsRoot 'browser-client.mjs') -Value 'export const fixture = true;' -Encoding ASCII
 Set-Content -LiteralPath $codexCliPath -Value 'fixture codex' -Encoding ASCII
