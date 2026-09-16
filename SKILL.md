@@ -549,6 +549,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-c
 powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
+## Post-Update Cleanup (Local User Preference)
+
+For this local installation, the user requests cleanup as part of completing a successful Desktop update/repatch installation, including the current run's backups and logs. Do not ask again for this same cleanup scope. This policy takes precedence over generic instructions in this skill to retain those run-specific files; an explicit request to keep evidence or debug a failure takes precedence over cleanup.
+
+- Start only after the exact expected version is installed with `SignatureKind=Developer`, installation/finalization has succeeded, the restarted Desktop is stable, and the installer/watcher has finished using its artifacts. A signed build alone is not installation success. On failure or incomplete verification, retain recovery artifacts, backups, and logs.
+- Identify artifacts by the current version, authorization ID, and recorded run paths. Remove this run's package staging directory, ASAR extracts, all run-generated MSIX files, temporary SDK BuildTools downloaded for this run, state/config backups, and repair/install logs. Do not delete whole backup/log roots or select unrelated files solely by modification date. Preserve older runs unless separately requested.
+- After successful installation verification, remove all signed MSIX artifacts generated for this run, including candidate, build, handoff, and deliverables copies; do not retain a reinstall copy unless the user explicitly requests one. The installed application does not require the source MSIX. Preserve active installation files, current config/auth/session databases, skills, plugin/runtime caches, automation scripts, standing authorization, and operational state needed for future updates.
+- Before deletion, report the concrete absolute targets, resolve them within the intended build/handoff/deliverables/backup/log roots, and check directory reparse points. Use PowerShell 7 and `Remove-Item -LiteralPath` without `-Force`; add `-Force` only for an observed attribute restriction within the authorized targets. A policy rejection is not an attribute restriction and must not be bypassed.
+- Verify each selected target is gone and the expected Developer package remains registered. Report cleanup completion and any retained or blocked targets accurately. Do not claim this documentation policy adds scheduled-task retry or automatic cleanup code to existing scripts.
 ## Success Criteria
 
 - If an existing `config.toml` was modified, the log shows a timestamped backup under `.codex\backups\config\`.
