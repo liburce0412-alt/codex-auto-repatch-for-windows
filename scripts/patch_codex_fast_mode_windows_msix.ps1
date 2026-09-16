@@ -2764,6 +2764,8 @@ function Invoke-PatchAppAsar {
   if ($OnlyBrowserComputerUse) {
     Write-Log 'patch scope: browser-use / browser / chrome native messaging / Windows Computer Use only'
     $targets = Find-BrowserComputerUsePatchTargets $rgPath $extractDir
+    $computerUseSurfaceTarget = Find-ComputerUseSurfaceTarget $extractDir
+    Write-Log "Windows CUA surface patch target: $computerUseSurfaceTarget"
 
     $customModelsTarget = $null
     $customModelsResult = 'not-requested'
@@ -2791,6 +2793,9 @@ function Invoke-PatchAppAsar {
     $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
     Write-Log "computer-use gate patch result: $computerUse"
 
+    $computerUseSurface = Invoke-NodePatcher $nodePath $patchers.ComputerUseSurface @($computerUseSurfaceTarget)
+    Write-Log "Windows CUA surface patch result: $computerUseSurface"
+
     $nodeReplTrustedPaths = Invoke-NodePatcher $nodePath $patchers.NodeReplTrustedPaths @($targets.NodeReplTrustedPaths)
     Write-Log "Node REPL trusted-paths dependency patch result: $nodeReplTrustedPaths"
 
@@ -2802,6 +2807,7 @@ function Invoke-PatchAppAsar {
       $targets.ComputerUseAvailability,
       $targets.ComputerUseInstallFlow,
       $targets.ComputerUseSetup,
+      $computerUseSurfaceTarget,
       $targets.NodeReplTrustedPaths,
       $customModelsTarget
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
@@ -2822,6 +2828,7 @@ function Invoke-PatchAppAsar {
     }
     if ($browserUse -eq 'already-patched' -and
         $computerUse -eq 'already-patched' -and
+        $computerUseSurface -eq 'already-patched' -and
         $nodeReplTrustedPaths -eq 'already-patched' -and
         (-not $IncludeCustomModelVisibility -or $customModelsResult -eq 'already-patched')) {
       Write-Log 'asar Browser/Computer Use and requested custom model visibility patches already present'

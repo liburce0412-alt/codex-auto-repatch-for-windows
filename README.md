@@ -1,5 +1,7 @@
 # Codex Windows Fast Patch Skill
 
+本地自动更新修复使用的 `-OnlyBrowserComputerUse` 模式已包含 Windows CUA surface 补丁，同一次 ASAR 打包完成；预检、语法检查和重复执行检查均覆盖该补丁。未知、残缺或重复的匹配会停止修复，不会跳过后继续安装。
+
 语言：中文 | [English](README.en.md)
 
 这是 `codex-windows-fast-patch` skill 的公开版本，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。
