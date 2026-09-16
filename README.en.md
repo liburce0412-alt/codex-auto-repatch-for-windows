@@ -1,5 +1,7 @@
 # Codex Windows Fast Patch Skill
 
+The local automatic repair mode `-OnlyBrowserComputerUse` includes the Windows CUA surface patch in the same ASAR pass, with dry-run, syntax and idempotence checks. Unknown, partial or ambiguous patterns stop repair before packaging.
+
 Language: [中文](README.md) | English
 
 This is a local-repair fork of the `codex-windows-fast-patch` skill. It helps Agent-Skills-capable agents repair common Windows Codex Desktop features that break after Desktop updates. The upstream project is [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill). This fork preserves upstream history and adds local Windows compatibility fixes and an explicit-only update policy.

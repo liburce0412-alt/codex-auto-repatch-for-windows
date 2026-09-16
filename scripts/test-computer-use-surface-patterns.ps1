@@ -285,5 +285,64 @@ Write-Output 'CUA_FAIL_CLOSED_SELECTION_AND_SCOPE_PASSED'
 }
 Write-Output 'ASAR_RUNNER_FALLBACK_PASSED'
 
+& {
+  # Execute the production automatic-repair branch with real surface selection and
+  # patching. Other gates are already patched; packing is isolated from Desktop.
+  $branch = $ast.Find({ param($n)
+    $n -is [System.Management.Automation.Language.IfStatementAst] -and
+    $n.Clauses[0].Item1.Extent.Text -ceq '$OnlyBrowserComputerUse'
+  }, $true)
+  if (-not $branch) { throw 'automatic Browser/Computer Use branch missing' }
+  $body = $branch.Clauses[0].Item2.Extent.Text
+  $runBranch = [scriptblock]::Create($body.Substring(1, $body.Length - 2))
+  $extractDir = $selectionRoot
+  $nodePath = $node.Source
+  $patchers = @{ BrowserUse='browser'; ComputerUse='computer'; NodeReplTrustedPaths='trusted'; CustomModels='models'; ComputerUseSurface=$patcherPath }
+  $asarPath = Join-Path $fixtureRoot 'automatic-app.asar'
+  $newAsarPath = Join-Path $fixtureRoot 'automatic-new.asar'
+  $IncludeCustomModelVisibility = $true
+  $DryRun = $false
+  $script:automaticPackCount = 0
+  function Write-Log { param($Message) }
+  function Find-BrowserComputerUsePatchTargets { return @{} }
+  function Find-CustomModelsPatchTarget { return $candidate }
+  function Invoke-NodePatcher {
+    param($NodePath, $Patcher, $Arguments)
+    if ($Patcher -ne $patcherPath) { return 'already-patched' }
+    $result = & $NodePath $Patcher @Arguments 2>&1
+    if ($LASTEXITCODE) { throw 'surface patch rejected fixture' }
+    return ($result -join "`n").Trim()
+  }
+  function Invoke-NpxAsar {
+    param($Action, $Source, $Target)
+    if ($Action -ne 'pack') { throw 'unexpected ASAR action' }
+    $script:automaticPackCount++
+    [IO.File]::WriteAllText($Target, [IO.File]::ReadAllText($candidate))
+  }
+  [IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
+  if ((& $runBranch) -ne $true -or $script:automaticPackCount -ne 1 -or
+      -not [IO.File]::ReadAllText($asarPath).Contains('CODEX_CUA_WINDOWS_SURFACE_V1')) {
+    throw 'automatic mode skipped the new surface patch when older gates were already patched'
+  }
+  if ((& $runBranch) -ne $false -or $script:automaticPackCount -ne 1) {
+    throw 'automatic mode repacked an already patched surface'
+  }
+  $DryRun = $true
+  [IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
+  if ((& $runBranch) -ne $false -or $script:automaticPackCount -ne 1) {
+    throw 'automatic dry run packed an artifact'
+  }
+  $DryRun = $false
+  [IO.File]::WriteAllText($candidate, 'const unknownLayout=1;')
+  Assert-Fails { & $runBranch } '*exactly one*found 0*'
+  [IO.File]::WriteAllText($candidate, '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
+  Assert-Fails { & $runBranch } '*surface patch rejected*'
+  [IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
+  [IO.File]::WriteAllText($secondCandidate, $positiveSource + $metadata)
+  Assert-Fails { & $runBranch } '*exactly one*found 2*'
+  if ($script:automaticPackCount -ne 1) { throw 'failed surface validation packed an artifact' }
+  Write-Output 'AUTOMATIC_CUA_SURFACE_INTEGRATION_PASSED'
+}
+
 Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
 Write-Output "Windows CUA surface regression passed: $fixtureRoot"
