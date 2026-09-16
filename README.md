@@ -37,6 +37,8 @@
 - `agents/openai.yaml`：Agent UI 元数据。
 - `scripts/repatch-codex-windows.ps1`：主工作流参考脚本。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`：Fast Mode、插件、浏览器、Computer Use 等 MSIX / ASAR 补丁参考实现。
+- `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyComputerUseSurface`：针对已支持的 Desktop 主 ASAR 中 Windows CUA surface 的 Darwin-only 门控，要求候选文件唯一、补丁块完整且唯一，保留 Darwin 行为和 Windows 功能开关，跳过无关 Chrome 修改，并执行 `node --check`；未知、残缺或重复布局直接失败。不能与其他 targeted 模式、marketplace 注册或 Fast Mode 验证混用。
+- `scripts/test-computer-use-surface-patterns.ps1`：Windows CUA surface ASAR patcher 的隔离回归测试，覆盖 120 组平台与功能开关组合、幂等、残缺或重复补丁拒绝、候选文件歧义、模式隔离和 ASAR 执行器回退；不代替真实 Desktop 审批及截图验收。
 - `scripts/patch-dynamic-tools-windows-msix.ps1`：用于修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema` 的 targeted MSIX / ASAR 脚本。
 - `scripts/patch-dynamic-tools-schema.cjs`：dynamicTools MSIX 脚本使用的 Electron bundle patcher。
 - `scripts/patch-remote-control-windows-msix.ps1`：手机远控 MSIX / ASAR 补丁和 marker 校验参考实现。
@@ -45,6 +47,10 @@
 - `scripts/install-computer-use-local.ps1`：Windows Computer Use 与 Chrome 本地运行时安装和校验参考实现；兼容旧式 `latest + plugin-local node_modules` 和新版“版本缓存 + `%LOCALAPPDATA%` 独立 cua_node runtime”布局，并同步 Chrome 外层 native-host manifest、`extension-host-config.json` 与两份 schema-2 app-server 状态文件。
 - `scripts/patch-computer-use-node-repl-context.ps1`：为精确支持哈希的 `@oai/sky 0.6.2` helper transport 修复跨 `node_repl` 调用的应用审批上下文，提供只读识别、安装、完整哈希校验和回滚。
 - `scripts/patch-computer-use-helper-win10.ps1`：为精确支持哈希的 `@oai/sky 0.4.20`、`0.5.2`、`0.6.6`、`0.6.11`、`0.6.16` 和 `0.6.17` helper 提供只读识别、安装和回滚；`26.707.12708.0`、`26.721.4979.0`、`26.803.10989.0`、`26.810.6296.0`、`26.810.7004.0`、`26.814.5167.0`、`26.814.5517.0`、`26.818.2872.0` 与 `26.818.3698.0` 是各自的端到端验证基线，不是版本门槛。`0.6.16` 与 `0.6.17` 的受保护代码布局完全一致，但整文件哈希不同；profile 只能按完整哈希选取，不能只按版本前缀判断。最新 `0.6.17` 基线包含八帧全唯一静态截图、二十帧全唯一动态截图和预热后资源稳定性验证。
+- `scripts/repair-cua-surface-lock.ps1`：修复 Windows 上 `unified-computer-use` 插件缓存的两处偏差——`scripts\launch.mjs` 里被 Desktop 对账写死为 `browser` 的 surface 列表（只改 `.mcp.json` 无效，每次 Desktop 启动都会被回写），以及 `resources\computer-description.md` 里只教 macOS `cua.getApp` 的注入描述（Windows 上该方法恒抛 `Native app bindings are unavailable for windows.`，正确的原生入口是窗口式 `cua.computer.*`）。按 profile 独立报告状态、保留目标文件行尾、逐文件备份，支持 `-VerifyOnly` 门禁、`-Json` 报告与 `-Rollback`。
+- `scripts/test-cua-surface-lock-patterns.ps1`：`repair-cua-surface-lock.ps1` 的隔离回归测试，覆盖完整补丁校验、缺失文件与残缺标记拒绝、行尾保持、幂等、回滚、`WhatIf` 和未知布局拒绝。修复过程不改写 `.mcp.json`，回滚会保留安装之后的用户改动并要求人工处理冲突。
+- `scripts/probe-cua-surface.py`：独立验收探针。用插件自带环境启动 `cua_repl`，把 `CUA_REPL_ENABLED_SURFACES` 强制为 `browser`，检查工具描述、必需的 API 成员，以及非空的 Windows 窗口和应用列表。此探针不替代真实 Desktop 重启或截图验收。
+- `scripts/test-probe-cua-surface.py`：探针结果解析的离线回归测试，确保空列表、错误或缺失响应、伪造的代码回显不会被判定为成功。
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。

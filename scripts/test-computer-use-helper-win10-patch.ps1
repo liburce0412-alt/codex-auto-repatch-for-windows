@@ -3,7 +3,7 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC', '0.6.26-71BAEAFD', '0.6.26-243F203E', '0.6.26-06EBD6D6', '0.6.26-6DDFB6A8', '0.6.26-7A2C7F70', '0.6.26-935D23E1')]
+  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC', '0.6.26-71BAEAFD', '0.6.26-243F203E', '0.6.26-06EBD6D6', '0.6.26-6DDFB6A8', '0.6.26-7A2C7F70', '0.6.26-935D23E1', '0.6.32-BAD605EF')]
   [string]$SkyVersion = '0.6.16'
 )
 
@@ -143,6 +143,12 @@ $Profiles = @{
     SkyVersion = '0.6.26'
     OriginalHash = '935D23E1DB9B0D5C492662ACAB9EBD4A8B96BCCD0DBB48C55A24E497CA79F8F3'
     PatchedHash = '93866B85718EBEFC0C661CBE69A60B80C51133383070808352105DF615ADA98D'
+  }
+  '0.6.32-BAD605EF' = [ordered]@{
+    SkyVersion = '0.6.32'
+    OriginalHash = 'BAD605EF7A800D2E2EBE2D9205DB6F9AB73EF193524392F5CAA1FA2E1A0DAE2C'
+    PatchedHash = '977D265B145232BA30B2916D8DED6D9B30037A084CF8A90EBBEDACEC91FCBEAC'
+    EndToEndValidatedDesktopVersion = $null
   }
 }
 $ProfileLabel = $SkyVersion
@@ -306,6 +312,9 @@ try {
   $before = Get-Status $testHelper $codexHome
   Assert-Equal $before.State 'original-patchable' 'original state mismatch'
   Assert-Equal $before.Sha256 $ExpectedOriginalHash 'original status hash mismatch'
+  if ($Profiles[$ProfileLabel].Contains('EndToEndValidatedDesktopVersion')) {
+    Assert-Equal $before.EndToEndValidatedDesktopVersion $Profiles[$ProfileLabel].EndToEndValidatedDesktopVersion 'pending capture acceptance must not be reported as end-to-end validated'
+  }
 
   $candidateHash = @(& $Patcher -HelperPath $testHelper -CodexHome $codexHome -ComputeCandidateHash) | Select-Object -Last 1
   Assert-Equal $candidateHash $ExpectedPatchedHash 'candidate hash mismatch'
