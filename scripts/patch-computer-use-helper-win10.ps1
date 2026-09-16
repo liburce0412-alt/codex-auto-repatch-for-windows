@@ -1065,6 +1065,55 @@ $PatchProfiles = @(
         PatchedHex = '0073124001000000'
       }
     )
+  },
+  # Desktop 26.908.4834.0 ships @oai/sky 0.6.32. The whole binary is
+  # 1549616 bytes and all five guarded region
+  # bodies read their expected OriginalHex at the exact 0.6.26 offsets
+  # (0x0003D7AC / 0x000413D0 / 0x000413E1 / 0x00126700 / 0x0012C4B8). The
+  # wrapper blob at VA 0x140127300 resolves to the original FrameArrived
+  # callback at 0x140041F9B and the same four IAT thunks (CreateThread
+  # 0x177018, CloseHandle 0x176FD8, RoInitialize 0x176F30,
+  # RoUninitialize 0x176F38), so every offset and hex string is reused verbatim
+  # from the 0.6.26 entries; only the whole-file hashes and version string move.
+  [ordered]@{
+    Name = '@oai/sky 0.6.32 helper BAD605EF / Windows 10 screenshot backend'
+    # Exact hashes and guarded regions are checked; Windows 10 capture acceptance is pending.
+    ValidatedDesktopVersion = $null
+    SkyVersion = '0.6.32'
+    OriginalSha256 = 'BAD605EF7A800D2E2EBE2D9205DB6F9AB73EF193524392F5CAA1FA2E1A0DAE2C'
+    PatchedSha256 = '977D265B145232BA30B2916D8DED6D9B30037A084CF8A90EBBEDACEC91FCBEAC'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x0003D7AC
+        OriginalHex = '4889c64189d6eb4c'
+        PatchedHex = 'e96f000000909090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x000413D0
+        OriginalHex = '0f855b310000'
+        PatchedHex = '0f853d310000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x000413E1
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x00126700
+        OriginalHex = (('00' * 169) -join '')
+        PatchedHex = '4883ec3848894c24304c8b510831c0b201f0410fb052117536488b01ff500831c931d24c8d05490000004c8b4c2430488364242000488364242800ff15d7fc04004885c074104889c1ff1589fc040031c04883c438c3488b4c2430488b4108c6401100488b01ff5010b8054000804883c438c34883ec3848894c2428b901000000ff15a9fb0400488b4c2428e80aacf1ffff15a1fb0400488b4c2428488b01ff501031c04883c438c3'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x0012C4B8
+        OriginalHex = '9b1f044001000000'
+        PatchedHex = '0073124001000000'
+      }
+    )
   }
 )
 
