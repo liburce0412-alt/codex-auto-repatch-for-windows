@@ -26,6 +26,7 @@ $NativePatchRelativePaths = @{
   '0.142.4' = 'references\remote-control-native-replacement-0.142.4.patch'
   '0.144.0-alpha.4' = 'references\remote-control-native-replacement.patch'
   '0.145.0-alpha.18' = 'references\remote-control-native-replacement-0.145.0-alpha.18.patch'
+  '0.154.0-alpha.6.2' = 'references\remote-control-native-replacement-0.154.0-alpha.6.2.patch'
 }
 $PatchPath = $null
 $WindowsSdkCppVersion = '10.0.26100.4188'
