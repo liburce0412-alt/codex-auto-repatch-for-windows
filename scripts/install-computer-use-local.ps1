@@ -4103,6 +4103,52 @@ console.log(JSON.stringify({
   }
 }
 
+function Test-ComputerUseSkillManagedByCua {
+  param(
+    [string]$CodexHomeResolved,
+    [string]$RuntimeSkyRoot
+  )
+
+  # Desktop removes the legacy skill only when unified CUA owns this surface.
+  $plugins = Get-BundledMarketplacePluginListWithCodexCli
+  $matches = @($plugins.installed | Where-Object {
+    $_.pluginId -eq 'unified-computer-use@openai-bundled' -and
+      $_.installed -eq $true -and $_.enabled -eq $true
+  })
+  if ($matches.Count -ne 1) { return $false }
+  $version = [string]$matches[0].version
+  if ($version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { return $false }
+  $root = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\unified-computer-use\$version"
+  try {
+    $descriptor = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root '.codex-plugin\plugin.json') | ConvertFrom-Json
+    if ($descriptor.name -ne 'unified-computer-use' -or $descriptor.version -ne $version) { return $false }
+    $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root '.mcp.json') | ConvertFrom-Json
+    $server = $manifest.mcpServers.cua_repl
+    $surfaces = @(([string]$server.env.CUA_REPL_ENABLED_SURFACES -split ',') | ForEach-Object { $_.Trim() })
+    if ($server.enabled -ne $true -or @($server.enabled_tools) -notcontains 'js' -or
+        @($server.disabled_tools) -contains 'js' -or $surfaces -notcontains 'computer') { return $false }
+    $services = $server.env.NODE_REPL_TRUSTED_SERVICES | ConvertFrom-Json
+    if ($services.sky -ne '@oai/sky/service') { return $false }
+
+    $modules = Split-Path -Parent (Split-Path -Parent $RuntimeSkyRoot)
+    $bin = Split-Path -Parent $modules
+    $node = Join-Path $bin 'node.exe'
+    $nodeRepl = Join-Path $bin 'node_repl.exe'
+    $launcher = Join-Path $modules '@oai\cua-repl\bin\cua-repl.mjs'
+    if ([IO.Path]::GetFullPath([string]$server.command) -ine $node -or
+        @($server.args).Count -ne 1 -or
+        [IO.Path]::GetFullPath([string]$server.args[0]) -ine $launcher -or
+        [IO.Path]::GetFullPath([string]$server.env.CUA_REPL_NODE_REPL_PATH) -ine $nodeRepl -or
+        [IO.Path]::GetFullPath([string]$server.env.NODE_REPL_NODE_MODULE_DIRS) -ine $modules) { return $false }
+    foreach ($path in @($node, $nodeRepl, $launcher)) {
+      if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    }
+  } catch {
+    return $false
+  }
+  return $true
+}
+
 function Test-OfficialComputerUseCache {
   param(
     [string]$CodexHomeResolved,
@@ -4115,6 +4161,11 @@ function Test-OfficialComputerUseCache {
   $cacheVersionRoot = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\computer-use\$version"
   $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
   $skillDocumentationProfile = Get-ComputerUseSkillDocumentationProfile $runtimeSkyRoot
+  $legacySkillDirectory = Join-Path $cacheVersionRoot 'skills\computer-use'
+  $managedSkill = $false
+  if (-not (Test-Path -LiteralPath $legacySkillDirectory)) {
+    $managedSkill = Test-ComputerUseSkillManagedByCua $CodexHomeResolved $runtimeSkyRoot
+  }
   $sourceClientPath = Join-Path $sourceRoot 'scripts\computer-use-client.mjs'
   $cachedClientPath = Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs'
   $requiredCachePaths = @(
@@ -4137,6 +4188,10 @@ function Test-OfficialComputerUseCache {
       continue
     }
     $cacheFile = Join-Path $cacheVersionRoot $relativePath
+    if ($managedSkill -and $relativePath -ieq 'skills\computer-use\SKILL.md') {
+      Write-Log 'legacy Computer Use skill is managed by the enabled unified CUA computer surface'
+      continue
+    }
     if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
       $mismatches += "missing:$relativePath"
       continue

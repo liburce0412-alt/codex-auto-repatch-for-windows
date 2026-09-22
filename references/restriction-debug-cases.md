@@ -773,3 +773,11 @@ Action:
 - Replace the hash in place at the offset the regex capture group reports, keeping the byte length identical. A length change would shift every following PE offset.
 - Run `scripts\test-asar-integrity.ps1 -TemporaryRoot <dir>` after touching any of this. It covers launcher discovery by content, the header-hash algorithm, tamper detection, repair, idempotence, multi-archive tables, read-only launchers, and the loud-failure path. Add `-CheckInstalledPackage` to also assert the installed package is self-consistent.
 - Accept `Desktop actually starts` as the only acceptance criterion for a repack. Patch-marker counts, `service_tier=priority` wire captures, and `install-computer-use-local.ps1 -StrictVerifyOnly` all pass on a package that dies at startup.
+
+## Strict Cache Verification Fails After Unified CUA Removes the Legacy Skill
+
+On Desktop `26.915.4065.0`, a real unified CUA session can enumerate native windows, capture screenshots, and read Chrome and in-app browser tabs while `install-computer-use-local.ps1 -StrictVerifyOnly` fails with `missing:skills\computer-use\SKILL.md`. Desktop's CUA skill reconciliation removes the legacy skill directories when the corresponding `CUA_REPL_ENABLED_SURFACES` entry is enabled. Reinstalling the cache restores a file Desktop will remove again.
+
+The verifier accepts only the complete absence of the legacy `skills\computer-use` directory when the CLI reports exactly one installed, enabled unified Computer Use plugin, its versioned descriptor matches, and its generated MCP manifest enables `js` and the `computer` surface with the current runtime launcher and trusted sky service. A partial skill directory, modified file, missing documentation outside that directory, disabled plugin, stale runtime path, or missing launcher still fails. The native runtime import and browser trust checks still run. Verification never recreates the retired directory.
+
+Run `scripts/test-managed-computer-use-skill.ps1 -TemporaryRoot <temporary-root>` and strict verification after a Desktop session has reconciled the plugins. Validate screenshots and browser tabs through the real Desktop `cua_repl` session separately; a passing cache check alone does not prove those operations.
