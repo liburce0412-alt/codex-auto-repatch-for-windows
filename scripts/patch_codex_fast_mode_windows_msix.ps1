@@ -1805,7 +1805,11 @@ const marker = 'CODEX_CUA_WINDOWS_SURFACE_V1';
 const originalPluginGate = 'if(!r.installed||i==null||a&&e.platform!==`darwin`)return null;';
 const patchedPluginGate = 'if(!r.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;';
 const originalSurfaceGate = 'p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null';
-const patchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)';
+// Desktop 26.917 removed the computerUseNodeRepl feature flag from the bundle;
+// the win32 branch now relies on t.computerUse alone (forced by
+// CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE=1 in the feature sender).
+const patchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)';
+const legacyPatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)';
 
 function count(value, source = text) {
   let total = 0;
@@ -1822,8 +1826,10 @@ const surfaceCount = count(originalSurfaceGate);
 const markerCount = count(marker);
 const patchedPluginCount = count(patchedPluginGate);
 const patchedSurfaceCount = count(patchedSurfaceGate);
-if (markerCount || patchedPluginCount || patchedSurfaceCount) {
-  if (markerCount === 1 && patchedPluginCount === 1 && patchedSurfaceCount === 1 &&
+const legacyPatchedSurfaceCount = count(legacyPatchedSurfaceGate);
+if (markerCount || patchedPluginCount || patchedSurfaceCount || legacyPatchedSurfaceCount) {
+  if (markerCount === 1 && patchedPluginCount === 1 &&
+      (patchedSurfaceCount + legacyPatchedSurfaceCount) === 1 &&
       pluginCount === 0 && surfaceCount === 0) {
     process.stdout.write('already-patched');
     process.exit(0);
@@ -2571,10 +2577,11 @@ function Find-ComputerUseSurfaceTarget {
   }
   $candidates = @(foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File)) {
     $text = [IO.File]::ReadAllText($candidate.FullName)
+    # Desktop 26.917 dropped the computerUseNodeRepl flag; it is no longer
+    # required as an anchor so both pre-26.917 and 26.917+ bundles match.
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
-         $text.Contains('computerUseNodeRepl') -and
          $text.Contains('serviceAppPath!=null') -and
          $text.Contains('platform===`darwin`'))) {
       $candidate.FullName
