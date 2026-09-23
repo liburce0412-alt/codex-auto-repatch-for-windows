@@ -100,7 +100,7 @@ if (-not $patched.Contains('CODEX_CUA_WINDOWS_SURFACE_V1')) {
 if (-not $patched.Contains('e.platform!==`darwin`&&e.platform!==`win32`')) {
   throw 'positive fixture did not admit win32 in the plugin exposure gate'
 }
-if (-not $patched.Contains('l.platform===`win32`') -or -not $patched.Contains('t.computerUseNodeRepl')) {
+if (-not $patched.Contains('l.platform===`win32`&&t.computerUse)') -or $patched.Contains('t.computerUseNodeRepl')) {
   throw 'positive fixture did not admit win32 in the generated CUA surface gate'
 }
 & $node.Source --check $positive.AssetPath 2>&1 | Out-Null
@@ -116,6 +116,12 @@ if ([IO.File]::ReadAllText($positive.AssetPath) -cne $patched) {
   throw 'idempotent invocation changed the patched file'
 }
 
+$legacyPatched = $patched.Replace('l.platform===`win32`&&t.computerUse)', 'l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)')
+$legacy = Invoke-PatcherFixture -Name 'legacy-patched-surface' -Source $legacyPatched -ExpectedExitCode 0
+if ($legacy.Output -cne 'already-patched' -or [IO.File]::ReadAllText($legacy.AssetPath) -cne $legacyPatched) {
+  throw 'legacy patched surface was not preserved'
+}
+
 $behaviorPath = Join-Path $fixtureRoot 'behavior.cjs'
 [IO.File]::WriteAllText($behaviorPath, @'
 const assert = require('node:assert/strict');
@@ -126,9 +132,9 @@ vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
 let cases = 0;
 for (const platform of ['darwin', 'win32', 'linux']) {
   for (const f of [false, true]) for (const computerUse of [false, true])
-  for (const computerUseNodeRepl of [false, true]) for (const enabled of [false, true])
+  for (const computerUseNodeRepl of [undefined, false, true]) for (const enabled of [false, true])
   for (const serviceAppPath of [null, '/service']) {
-    const expected = f && computerUse && (platform === 'win32' ? computerUseNodeRepl :
+    const expected = f && computerUse && (platform === 'win32' ? true :
       platform === 'darwin' && enabled && serviceAppPath !== null);
     const actual = context.buildSurface(f, {platform}, {computerUse, computerUseNodeRepl},
       {enabled, paths: {serviceAppPath}});
@@ -175,7 +181,8 @@ function Assert-RejectedUnchanged {
 
 Assert-RejectedUnchanged 'marker-only' '/*CODEX_CUA_WINDOWS_SURFACE_V1*/const unrelated=1;'
 Assert-RejectedUnchanged 'marker-with-original-gates' ($positiveSource + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
-Assert-RejectedUnchanged 'marker-with-corrupt-gate' ($patched.Replace('t.computerUseNodeRepl', 't.unknownFlag'))
+Assert-RejectedUnchanged 'marker-with-corrupt-gate' ($patched.Replace('l.platform===`win32`&&t.computerUse)', 'l.platform===`win32`&&t.unknownFlag)'))
+Assert-RejectedUnchanged 'mixed-current-legacy-patches' ($patched + $legacyPatched)
 Assert-RejectedUnchanged 'patched-without-marker' ($patched.Replace('/*CODEX_CUA_WINDOWS_SURFACE_V1*/', ''))
 Assert-RejectedUnchanged 'duplicate-marker' ($patched + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
 Assert-RejectedUnchanged 'duplicate-patched-gates' ($patched + $patched)
@@ -209,6 +216,9 @@ $candidate = Join-Path $buildRoot 'renamed-main.js'
 $metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces computerUseNodeRepl*/'
 [IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'content-based selection failed' }
+$metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/'
+[IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
+if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw '26.917 selection without retired flag failed' }
 [IO.File]::WriteAllText($candidate, $patched + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'patched target selection failed' }
 $secondCandidate = Join-Path $buildRoot 'second-main.js'
