@@ -2805,6 +2805,8 @@ function Invoke-PatchAppAsar {
 
     $nodeReplTrustedPaths = Invoke-NodePatcher $nodePath $patchers.NodeReplTrustedPaths @($targets.NodeReplTrustedPaths)
     Write-Log "Node REPL trusted-paths dependency patch result: $nodeReplTrustedPaths"
+    $nodeReplProxyEnv = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-node-repl-proxy-env.cjs') @($targets.NodeReplTrustedPaths)
+    Write-Log "Node REPL proxy environment patch result: $nodeReplProxyEnv"
 
     $syntaxTargets = @(
       $targets.BrowserUseFeatureHook,
@@ -2837,6 +2839,7 @@ function Invoke-PatchAppAsar {
         $computerUse -eq 'already-patched' -and
         $computerUseSurface -eq 'already-patched' -and
         $nodeReplTrustedPaths -eq 'already-patched' -and
+        $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
         (-not $IncludeCustomModelVisibility -or $customModelsResult -eq 'already-patched')) {
       Write-Log 'asar Browser/Computer Use and requested custom model visibility patches already present'
       return $false
@@ -2923,6 +2926,8 @@ function Invoke-PatchAppAsar {
   Write-Log "computer-use gate patch result: $computerUse"
   $nodeReplTrustedPaths = Invoke-NodePatcher $nodePath $patchers.NodeReplTrustedPaths @($targets.NodeReplTrustedPaths)
   Write-Log "Node REPL trusted-paths patch result: $nodeReplTrustedPaths"
+  $nodeReplProxyEnv = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-node-repl-proxy-env.cjs') @($targets.NodeReplTrustedPaths)
+  Write-Log "Node REPL proxy environment patch result: $nodeReplProxyEnv"
   $bundledMarketplaceCopy = Invoke-NodePatcher $nodePath $patchers.BundledMarketplaceCopy @($targets.BundledMarketplaceCopy)
   Write-Log "bundled marketplace copy patch result: $bundledMarketplaceCopy"
 
@@ -2948,6 +2953,7 @@ function Invoke-PatchAppAsar {
       $browserUse -eq 'already-patched' -and
       $computerUse -eq 'already-patched' -and
       $nodeReplTrustedPaths -eq 'already-patched' -and
+      $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
       $bundledMarketplaceCopy -eq 'already-patched') {
     Write-Log 'asar patch already present'
     return $false
