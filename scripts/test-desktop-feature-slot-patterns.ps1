@@ -229,6 +229,14 @@ try {
   Assert-ValidJavaScript -Name 'pre-26.818 main' -AssetPath $mainLegacy.AssetPath
   Assert-Idempotent -Name 'pre-26.818 main' -AssetPath $mainLegacy.AssetPath -Target 'main'
 
+  # Desktop 26.917 removed computerUseNodeRepl from the env gate, so only the
+  # value-rewritten feature object identifies the already-patched main file.
+  $main917Source = $mainSlotSource.Replace(',computerUseNodeRepl:!0', '').Replace('browserExtensions:e.browserExtensions,', 'browserExtensions:e.browserExtensions,browserSettingsCloudSync:e.browserSettingsCloudSync,')
+  $main917 = Invoke-PatcherFixture -Name 'codex-26-917-desktop-feature-main' -Source $main917Source -Target 'main' -ExpectedExitCode 0
+  if ($main917.Output -cne 'patched') { throw '26.917 main fixture was not patched' }
+  Assert-ValidJavaScript -Name '26.917 main' -AssetPath $main917.AssetPath
+  Assert-Idempotent -Name '26.917 main' -AssetPath $main917.AssetPath -Target 'main'
+
   $mainNegative = Invoke-PatcherFixture -Name 'unrelated-desktop-feature-main' -Source $mainNegativeSource -Target 'main' -ExpectedExitCode 2
   if ($mainNegative.Output -cne 'browser-use-desktop-feature-main-target-not-found') {
     throw "unrelated main fixture failed for the wrong reason: $($mainNegative.Output)"
