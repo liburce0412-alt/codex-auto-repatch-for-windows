@@ -1,189 +1,101 @@
-# Codex Windows Fast Patch Skill
+# Codex 自动化重补丁 for Windows
 
-本地自动更新修复使用的 `-OnlyBrowserComputerUse` 模式已包含 Windows CUA surface 补丁，同一次 ASAR 打包完成；预检、语法检查和重复执行检查均覆盖该补丁。未知、残缺或重复的匹配会停止修复，不会跳过后继续安装。
+[English](README.en.md)
 
-语言：中文 | [English](README.en.md)
+Windows 商店更新 Codex Desktop 后，自动重新应用已适配的本地补丁，显示实时终端进度；修复失败时打开独立 Codex CLI，保留日志和应用数据备份。项目由 [liburce0412-alt](https://github.com/liburce0412-alt) 维护。
 
-这是 `codex-windows-fast-patch` skill 的本地修复分叉，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。上游项目为 [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill)，本分叉保留上游历史，并加入本地 Windows 兼容修复与显式更新策略。
+## 这个版本做什么
 
-## 主要功能
+- **更新后自动修复**：监听 Windows AppX 商店注册事件，并在登录后补查；无需常驻轮询进程。
+- **实时进度**：单独终端显示准备、打包、安装、重启等阶段及实际子进程日志；关闭查看窗口不会终止任务。
+- **失败转到 CLI**：提前从当前安装包复制并校验独立 CLI 和运行组件，失败后打开一次交互终端，沿用现有模型与配置，不自动发送任务。
+- **先备份再替换**：校验补丁包身份、版本、签名和哈希，备份应用数据后才卸载当前用户的精确商店包。原版 MSIX 恢复包是可选项。
+- **成功后清理**：只有安装、后处理和窗口稳定检查均通过后，才删除清单内且哈希未变化的本次构建缓存；保留数据备份、补丁包及诊断记录。
+- **失败版本不循环重试**：修正问题后可显式重试同一版本；后续新商店版本重新检查兼容性。
 
-如果你的 Windows Codex Desktop 更新后出现下面这些问题，可以让 agent 使用这个 skill：
-
-- 修复 Fast Mode、gpt-6-astra、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna 模型不显示，蓝紫色 Power 拖动条消失，以及自定义提供商下 Ultra 开关变灰不可点的问题。补丁只放行当前版本目录里已存在、但被标成隐藏的模型条目，本身不会创建条目；目录里没有的模型，重打多少次都不会出现。
-- 修复 Codex 重启后界面语言又变回英文的问题。
-- 修复插件入口、插件安装按钮、插件市场列表不可用的问题。
-- 修复内置浏览器、浏览器面板、Chrome / browser_use 不可用的问题。
-- 修复 Computer Use / 电脑操控 / Any App 不可用的问题。
-- 修复 Computer Use 能列出窗口、但后续独立调用因持久 helper 的应用审批回调丢失 `node_repl` 执行上下文而报错的问题；只对文档列出的精确 `@oai/sky` 源文件哈希应用补丁。
-- 修复特定 Win10 CUA helper 在截图时因 `SetIsBorderRequired` 返回 `0x80004002`，以及绕过后 `FrameArrived` 同步等待死锁的问题；仅支持文档列出的精确 helper 哈希。
-- 修复手机远控入口不显示、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 版本过期等问题。(第三方api登录态下使用原生手机远控功能)
-- 修复 Goal 入口、部分设置入口、功能按钮在更新后消失或变灰的问题。
-- 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
-- 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
-- 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
-- 仅在用户明确要求时检查和合并 GitHub 更新，保留本地修复与配置。
-- 破限只需：帮我配置破限相关文件和config.toml中的相关配置
-
-## 平台支持
-
-当前只支持 Windows。
-
-这个 skill 依赖 Windows Store / MSIX 包结构、PowerShell、`Get-AppxPackage`、`makeappx.exe`、`signtool.exe`、Windows 用户环境变量，以及 Windows Computer Use helper 路径。
-
-不要在 macOS 上直接运行。macOS 需要单独的实现流程，例如处理 Codex `.app` 包、ASAR 解包和重打包、`codesign` 或 quarantine、shell 脚本，以及 macOS 自己的 Computer Use 可用性门控。
-
-## 文件说明
-
-- `SKILL.md`：Agent skill 主说明。
-- `agents/openai.yaml`：Agent UI 元数据。
-- `scripts/repatch-codex-windows.ps1`：主工作流参考脚本。
-- `scripts/patch_codex_fast_mode_windows_msix.ps1`：Fast Mode、插件、浏览器、Computer Use 等 MSIX / ASAR 补丁参考实现。
-- `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyComputerUseSurface`：针对已支持的 Desktop 主 ASAR 中 Windows CUA surface 的 Darwin-only 门控，要求候选文件唯一、补丁块完整且唯一，保留 Darwin 行为和 Windows 功能开关，跳过无关 Chrome 修改，并执行 `node --check`；未知、残缺或重复布局直接失败。不能与其他 targeted 模式、marketplace 注册或 Fast Mode 验证混用。
-- `scripts/test-computer-use-surface-patterns.ps1`：Windows CUA surface ASAR patcher 的隔离回归测试，覆盖 120 组平台与功能开关组合、幂等、残缺或重复补丁拒绝、候选文件歧义、模式隔离和 ASAR 执行器回退；不代替真实 Desktop 审批及截图验收。
-- `scripts/patch-dynamic-tools-windows-msix.ps1`：用于修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema` 的 targeted MSIX / ASAR 脚本。
-- `scripts/patch-dynamic-tools-schema.cjs`：dynamicTools MSIX 脚本使用的 Electron bundle patcher。
-- `scripts/patch-remote-control-windows-msix.ps1`：手机远控 MSIX / ASAR 补丁和 marker 校验参考实现。
-- `scripts/patch-remote-control-asar.cjs`：手机远控 Electron bundle patcher。
-- `scripts/build-remote-control-native-replacement.ps1`：当 native app-server 因 API-key 主认证拒绝手机远控时，在指定工作目录下构建 patched `app\resources\codex.exe` replacement。默认从安装包副本自动识别原生版本；内置映射包括在 Desktop `26.715.2305.0` 上完成精确 tag 构建、安装和手机端到端实测的 `0.145.0-alpha.18`，在 Desktop `26.707.3748.0` 上完成同类验证的 `0.144.0-alpha.4`，以及仅通过 patch-apply 验证的历史 `0.142.4`。其他版本必须提供严格匹配的 `-CodexSourceRef`、`-AppServerVersion` 和已验证的 `-PatchPathOverride`。
-- `scripts/install-computer-use-local.ps1`：Windows Computer Use 与 Chrome 本地运行时安装和校验参考实现；兼容旧式 `latest + plugin-local node_modules` 和新版“版本缓存 + `%LOCALAPPDATA%` 独立 cua_node runtime”布局，并同步 Chrome 外层 native-host manifest、`extension-host-config.json` 与两份 schema-2 app-server 状态文件。
-- `scripts/patch-computer-use-node-repl-context.ps1`：为精确支持哈希的 `@oai/sky 0.6.2` helper transport 修复跨 `node_repl` 调用的应用审批上下文，提供只读识别、安装、完整哈希校验和回滚。
-- `scripts/patch-computer-use-helper-win10.ps1`：为精确支持哈希的 `@oai/sky 0.4.20`、`0.5.2`、`0.6.6`、`0.6.11`、`0.6.16` 和 `0.6.17` helper 提供只读识别、安装和回滚；`26.707.12708.0`、`26.721.4979.0`、`26.803.10989.0`、`26.810.6296.0`、`26.810.7004.0`、`26.814.5167.0`、`26.814.5517.0`、`26.818.2872.0` 与 `26.818.3698.0` 是各自的端到端验证基线，不是版本门槛。`0.6.16` 与 `0.6.17` 的受保护代码布局完全一致，但整文件哈希不同；profile 只能按完整哈希选取，不能只按版本前缀判断。最新 `0.6.17` 基线包含八帧全唯一静态截图、二十帧全唯一动态截图和预热后资源稳定性验证。
-- `scripts/repair-cua-surface-lock.ps1`：修复 Windows 上 `unified-computer-use` 插件缓存的两处偏差——`scripts\launch.mjs` 里被 Desktop 对账写死为 `browser` 的 surface 列表（只改 `.mcp.json` 无效，每次 Desktop 启动都会被回写），以及 `resources\computer-description.md` 里只教 macOS `cua.getApp` 的注入描述（Windows 上该方法恒抛 `Native app bindings are unavailable for windows.`，正确的原生入口是窗口式 `cua.computer.*`）。按 profile 独立报告状态、保留目标文件行尾、逐文件备份，支持 `-VerifyOnly` 门禁、`-Json` 报告与 `-Rollback`。
-- `scripts/test-cua-surface-lock-patterns.ps1`：`repair-cua-surface-lock.ps1` 的隔离回归测试，覆盖完整补丁校验、缺失文件与残缺标记拒绝、行尾保持、幂等、回滚、`WhatIf` 和未知布局拒绝。修复过程不改写 `.mcp.json`，回滚会保留安装之后的用户改动并要求人工处理冲突。
-- `scripts/probe-cua-surface.py`：独立验收探针。用插件自带环境启动 `cua_repl`，把 `CUA_REPL_ENABLED_SURFACES` 强制为 `browser`，检查工具描述、必需的 API 成员，以及非空的 Windows 窗口和应用列表。此探针不替代真实 Desktop 重启或截图验收。
-- `scripts/test-probe-cua-surface.py`：探针结果解析的离线回归测试，确保空列表、错误或缺失响应、伪造的代码回显不会被判定为成功。
-- `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
-- `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
-- `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
-- `scripts/lib/asar-integrity.ps1`：三个 MSIX 补丁脚本共用的 Electron ASAR 完整性表读写库。启动器按内容识别而不是按文件名（26.9xx 之前是 `Codex.exe`，之后是 `ChatGPT.exe`），`asar pack` 后重写嵌入哈希并回读断言；可执行文件引用了 `app.asar` 但表结构不可解析时硬失败，避免装出无法启动的包。
-- `scripts/lib/appx-launch.ps1`：通过 AppUserModelId 启动已安装包的共享实现。不要直接运行安装目录里的可执行文件：26.9xx 的 `app\Codex.exe` 只是 CLI shim，启动它不会出现桌面窗口。
-- `scripts/test-asar-integrity.ps1`：`lib/asar-integrity.ps1` 的回归测试，全部用合成 fixture，覆盖按内容识别启动器、header 哈希算法、篡改检测、修复、幂等、多档案表、只读启动器和硬失败路径；加 `-CheckInstalledPackage` 时额外只读校验当前安装包自洽。
-- `scripts/test-staged-package-selection.ps1`：Store 更新后包选择逻辑的回归测试。
-- `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
-- `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
-- `references/win10-computer-use-screenshot-backend.md`：Win10 原生截图 helper 的 `0x80004002`、`FrameArrived` 死锁、补丁边界和验收证据。
-- `references/remote-control-debug-cases.md`：手机远控配对、隔离授权、native app-server 网络、版本过期状态和配对后 API 地址诊断案例。
-- `references/remote-control-native-replacement.patch`：手机远控 native app-server replacement 使用的 Rust 源码参考补丁。
-- `references/remote-control-native-replacement-0.145.0-alpha.18.patch`：已在 Desktop `26.715.2305.0` 上完成构建、安装和手机端到端实测的 `rust-v0.145.0-alpha.18` 专用 Rust 源码补丁。
-- `references/remote-control-native-replacement-0.142.4.patch`：历史 `rust-v0.142.4` 专用、仅通过 clean patch-apply 验证的 Rust 源码补丁；不得描述为完整编译或端到端验证。
+默认自动化范围是 Chrome/Browser、Windows Computer Use 与自定义模型可见性。仓库也保留手动修复工具，具体适用范围见 [SKILL.md](SKILL.md)。未知代码结构会中止打包，不承诺所有未来版本通用。
 
 ## 安装
 
-skill 目录就是这个仓库的一份克隆，直接 `git clone` 到你的智能体的 skills 目录即可。目标路径取决于你用的 harness，skill 本身不关心装在哪个 harness 下面：
+需要 Windows x64、当前用户已安装的 Codex Desktop、Git，以及**独立安装的 PowerShell 7.5 或以上**。构建工具由现有补丁脚本检查；首次打包可能需要下载 Windows SDK。请预留安装包展开和应用数据备份的磁盘空间。
+
+在外部 PowerShell 窗口中执行。首次克隆时请使用以下目录；已有安装请先保存本地改动，不要覆盖或强制重置。
 
 ```powershell
-# Codex
-git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
-
-# Claude Code
-git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
+git clone https://github.com/liburce0412-alt/codex-auto-repatch-for-windows.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
+Set-Location "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
+pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1 -EnableAutomation
 ```
 
-其它支持 Agent Skills 的智能体同理，把目标目录换成它自己的 skills 根就行。完整历史只占约 800 KB，比工作树本身还小。
+`-EnableAutomation` 为当前用户创建长期更新授权，注册任务计划 `Codex Desktop Post-Update Repair`，允许商店更新后自动关闭并修复 Codex。安装脚本会备份旧脚本，部署自动化组件并验证独立 CLI。它不会立即执行重补丁。
 
-装完重启智能体，让它重新加载 skill 元数据。
+目录名保留 `codex-windows-fast-patch`，用于兼容技能识别和现有自动化路径；仓库展示名与此不同。
 
-如果你的 harness 用插件或 marketplace 机制安装 skill，那份副本不是 git 工作树，自更新不可用，其余功能不受影响。
+## 使用与维护
 
-## 使用
+更新 Codex 后，任务会检查商店版本；识别到适配目标才进入准备、安装及验证。实时进度终端会显示日志，安装需要权限时可能出现仅针对已验证 MSIX 的 UAC 提示。
 
-安装后，让支持 Agent Skills 的智能体使用 `codex-windows-fast-patch` 工作流处理当前机器上的 Codex Desktop 问题。
-
-本分叉不在技能调用、修复开始或补丁失败时自动同步 GitHub。只有用户明确要求检查、更新或合并时，才检查工作区和远端、获取更新、比较提交并合并。已有未提交改动必须保留；发生冲突时逐项处理，不通过清空工作区、自动 stash 或强制重置来完成更新。保留已有的 `.skill-auto-update-disabled` 标记。网络不可用时继续使用已安装版本。具体流程见 `SKILL.md` 的 Explicit-Only GitHub Update Policy。
-
-这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录、Computer Use 文件状态和远控相关日志，再决定执行、改写或只借鉴其中步骤。
-
-## 使用建议
-
-有些修复会重装 Codex Desktop。重装时当前 Codex Desktop 会被关闭，所以不要让正在使用的这个 Codex Desktop 会话自己重装自己，否则很容易出现“修到一半会话被卸载/中断”的情况。
-
-可以直接让当前 Codex Desktop 会话修复的问题：
-
-- Computer Use 提示插件不可用、`native pipe unavailable`、`missing-helper-path`、重启后又失效。
-- Computer Use 的 `list_windows` 成功，但下一次 `get_window_state` / `activate_window` 报 `node_repl exec context not found`；先做精确源文件哈希识别，未知哈希停止。
-- Computer Use 能列出窗口但 Win10 截图报 `SetIsBorderRequired ... 0x80004002`；此类只能对精确支持哈希运行 helper patcher，未知哈希停止。
-- Chrome / browser_use 的 helper 路径、缓存、native-host 文件损坏。
-- 插件市场配置损坏、`codex plugin list` 报 marketplace manifest 错误。
-- 本地 marketplace 缺 `.agents\plugins\marketplace.json`。
-- 切换 `model_provider` / API 配置后，本地旧会话消失但 `sessions`、`archived_sessions` 或 `state_5.sqlite` 仍有数据。此类先用 provider history sync，不需要重装 MSIX。
-- 旧会话已经恢复显示，但继续对话时报“当前工作目录缺失”或 `invalid codex request`。此类先用 provider history sync 的 dry-run 看 `missing rollout cwd dirs before`，确认后用 `-RepairMissingCwdDirs` 创建 rollout 记录的原始缺失目录。
-- 只需要备份/恢复 Codex 配置，或安装可选的自定义提示词配置。
-- 手机远控已经能配对，但手机发来的对话请求到了错误的模型 API 地址。这类属于配对后的配置诊断，先查实际请求 URL 和当前配置，再依据证据修改。
-
-建议使用另一个 agent、外部 PowerShell、VS Code/Antigravity 里的 Codex 扩展，或其它不会被 Codex Desktop 重装影响的环境来修复的问题：
-
-- Fast Mode / Priority 模式不显示、不生效。
-- Codex 重启后语言变回英文。
-- 插件入口、插件安装按钮、Goal 入口、Computer Control 的 `Any App` 变灰或消失。
-- 内置浏览器、浏览器面板、Chrome / browser_use 被桌面端门控隐藏或禁用。
-- bundled runtime marketplace 反复丢失 `sites`，或 Desktop 日志里的 `pluginNames` 不含 `sites` 且出现 `not_in_bundled_marketplace_plugin_names` / `sites@openai-bundled`。
-- 手机远控入口不显示、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 版本过期。
-- 任何需要运行完整 repatch、重新打包 MSIX、安装 Developer 签名包、替换 `app.asar` 或替换 `resources\codex.exe` 的修复。
-
-简单判断规则：如果修复会停止、卸载、重装或重新启动 Codex Desktop，就用另一个 agent 或外部 PowerShell 来跑；如果只是修本地配置、插件缓存、marketplace、备份或验证，一般可以让当前 Codex Desktop 会话直接处理。
-
-## 用 VS Code Codex 扩展作为外部执行器
-
-在 Windows 上，如果修复会停止、卸载、重装、重新打包 MSIX、替换 `app.asar`、替换 `resources\codex.exe` 或重启 Codex Desktop，推荐从 VS Code 里的 Codex 扩展、外部 PowerShell，或其它不会被 Desktop 重启影响的 agent 环境执行。
-
-执行目标始终是 Codex Desktop 的状态目录：默认是 `$env:USERPROFILE\.codex`。不要把隔离 CLI wrapper 当成 Desktop 执行环境；如果某个 wrapper 会把 `CODEX_HOME` 设为 `$env:USERPROFILE\.codex-cli` 或其它隔离目录，那只是 CLI 状态，不是 Desktop 的插件、市场、MCP、远控或登录状态。
-
-外部执行器开始前先确认没有全局 `CODEX_HOME`。不要把 `.codex` 复制或迁移到 `.codex-cli`，不要提交或展示 `auth.json`、API key、OAuth token、MCP 凭据、浏览器资料或其它本地凭据。建议顺序是：先用 `scripts\manage-codex-backups.ps1 -Action Backup` 备份 Desktop 状态，再做只读检查和日志判断；需要 MSIX / ASAR 修复时先跑对应脚本的 `-DryRun`，只有 dry run 找到并验证目标后再运行安装路径，例如 `repatch-codex-windows.ps1` 或 targeted `*-windows-msix.ps1 -Install -Launch -InstallPrerequisites`。Store 刚下载的新包可能只对 SYSTEM 处于 Staged；补丁器会选择当前用户或 SYSTEM-Staged 的 `-AllUsers` 注册，并仅在该查询不可用时回退 WindowsApps 目录。继续前核对 `selected Codex app` 日志，只有需要强制指定来源时才传 `-AppPath`。
-
-手机远控安装路径会在缺少 `makeappx.exe` / `signtool.exe` 时从 NuGet 下载 Windows SDK BuildTools，并把缓存放在 `-OutputRoot\.remote-control-temp`，不会在已指定 D 盘输出根时回落到 `%TEMP%`。默认不强制使用本地代理；如果机器必须走代理，再显式传 `-BuildToolsProxy "http://127.0.0.1:10808"` 或设置 `CODEX_WINDOWS_SDK_BUILDTOOLS_PROXY`。日志不会打印代理 URI 或凭据。如果遇到 `curl download failed with exit code 7`，先确认是否传了一个未监听的本地代理。
-
-原生 replacement 构建也应把 `-WorkRoot` 放在用户指定的大容量非系统盘，并优先使用短根路径。`26.715.2305.0 / 0.145.0-alpha.18` 的实测中，过长的 D 盘路径会让 Cargo 的 Git 依赖 checkout 因 Windows path-too-long 失败；缩短为类似 `D:\CodexData\rc145` 的根路径后构建成功。PowerShell 5.1 下 SDK NuGet 包使用已校验的 `tar.exe` 解包，并兼容库与头文件分离的实际 `c\um\x64`、`c\ucrt\x64`、`c\Include\<version>` 和 `c\bin\<version>\x64` 布局。
-
-一个典型请求是：
-
-```text
-使用 codex-windows-fast-patch 这个 skill，检查并修复这台 Windows 机器上的 Codex Desktop Fast Mode、语言/locale、Chrome browser_use、插件市场和 Computer Use 可用性问题。
-```
-
-手机远控请求示例：
-
-```text
-使用 codex-windows-fast-patch 这个 skill，修复 Windows Codex Desktop 手机远控，同时保留我的第三方 API 主使用方式和现有会话记录。
-```
-
-## 预期验证
-
-- 补丁日志中的 `selected Codex app` 与 `source package` 指向预期的最高版本；如果 Store 新包只对 SYSTEM 为 Staged，也不能静默回退到旧用户包。
-- 补丁日志包含 `fast-mode UI patch result`、`locale i18n patch result`、`browser-use gate patch result` 和 `Node REPL trusted-paths patch result`，结果为 `patched` 或 `already-patched`。
-- Fast Mode 本地线缆验证能在 `/v1/responses` 的 HTTP 请求体或 WebSocket 帧里捕获 `service_tier=priority`；如果 `codex exec` 未发出请求，验证器会回退到 app-server，并额外确认 `thread/start serviceTier=priority`。
-- 如果本次修复包含浏览器和 Computer Use，`codex plugin list` 应显示 `browser`、`chrome`、`computer-use` 为 `installed, enabled`；`sites`、`latex`、`deep-research`、`visualize` 等无关可选插件必须保留用户原有状态。给主 wrapper 加 `-VerifyAllBundledPluginsAvailable` 会在正常修复/DryRun 流程中附加 availability 断言，校验稳定镜像与当前安装包的 descriptor 名称和版本一致，并校验 CLI JSON 报告相同版本；断言本身不联网下载、不执行 `plugin add`、不启用可选插件，但 wrapper 的其它修复步骤仍可能写入状态。完全只读时直接运行 `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable`。该断言以安装包自带的 `app\resources\plugins\openai-bundled` 清单为基准，所以当账号侧 feature flag 让 Desktop 物化的 descriptor 少于安装包时，它会以 `stable bundled marketplace descriptor set does not match the installed package` 失败。第三方 provider 或 API key 账号出现这种情况属于预期，不是修复目标：例如 Desktop `26.825.6671.0` 安装包带 10 个 descriptor，而账号只能物化 8 个，缺的 `unified-computer-use`（依赖 `browserUseTinysky`，且在 Windows 上恒返回空并标记 `hidden`）与 `user-writing`（依赖 `userWriting` 与 ChatGPT 账号用户设置）都无法在这类账号下取得。此时改用「按本次修复实际需要的插件名」验收，并在报告里写明缺口与原因。
-- 如果修复 `node_repl exec context not found`，`StrictVerifyOnly` 应报告已验证的 helper-transport 补丁哈希；随后必须在启动 helper 的调用之后，用至少两个新的独立调用激活并截图同一个稳定窗口，并检查图片内容确实属于目标窗口。只有 `list_windows`、截图计数或 PNG 文件不算验收。
-- 如果修复是在外部 PowerShell、VS Code 等环境里执行、没有 Desktop 的 `node_repl` 内核，可以改用当前 `cua_node` 运行时自带的 `node.exe` 起多个独立短进程来做 Computer Use 真实验收：先在 `globalThis.nodeRepl` 仍为 `undefined` 时 import 官方 sky 入口并访问一次导出，再注入 `{ config: {}, createElicitation }` 应答 helper 的审批请求，然后用 `activate_window({ window: { app, id } })` 和 `get_window_state({ window, include_screenshot: true, include_text: true })` 取图（图片在 `screenshots[].url` 的 data URL 里，常见媒体类型是 `image/jpeg`，sky 没有单独的 screenshot 方法）。报告里要写明这条替代路径没有走 Desktop 内真实审批 UI。Chrome/浏览器的 smoke test 无法这样替代——`browser-client.mjs` 硬性要求 `globalThis.nodeRepl.rpc`，只有 Desktop 的 Node REPL 提供这条受信通道；自己写一个 `rpc` 也没用，它背后没有真实 browser service，而且 `sky.js` 是按同一个属性选传输路径的，一旦定义 `rpc`，Computer Use 也会从本地 helper 客户端切到这条假通道，把刚验过的能力弄坏——此时只能报到「门已开且配置/清单/缓存/注册表已校验」，并明说标签页读取没跑。
-- Desktop 日志应保留当前安装包的 bundled descriptor 名称，并且不应通过 `not_in_bundled_marketplace_plugin_names` 删除用户原本已安装的插件；descriptor 存在不等于插件已安装。
-- 如果本次修复包含浏览器能力，Desktop 日志里 `browser_use_availability_resolved` 显示 `available=true` 和 `reason=local-patched`。
-- 如果修复 Win10 截图 helper，patcher 应报告已验证 patched SHA-256；Explorer 首帧/连续帧、任务管理器动态帧、文字读取、窗口枚举和预热后资源稳定性都应通过。
-- 如果需要 Chrome 控制，`codex plugin list` 显示 `chrome@openai-bundled` 为 `installed, enabled`；native messaging host manifest 的路径和注册表值指向当前稳定缓存；`allowed_origins` 与缓存 `scripts\extension-ids.json` 顶层 ID 精确一致；`extension-host-config.json` 包含与当前安装包匹配的本地 `codex.exe` 以及同一当前运行时的 `node.exe` / `node_repl.exe`；`%LOCALAPPDATA%\OpenAI\Codex\chrome-native-hosts-v2.json` 与 `%USERPROFILE%\.codex\chrome-native-hosts-v2.json` 都包含当前版本、官方哈希身份和全部现存路径。稳定 marketplace 与版本化缓存中的 `browser-client.mjs` 必须和安装包 SHA-256 完全一致。旧版还要求该哈希出现在当前 `app.asar` 的信任列表中；`26.814` 形态则要求完整的 native-host 路径契约，并要求两份 v2 state 中的 `browserClientPath` 与 `browserServicePath` 同时指向同一个当前版本稳定缓存。如果该缓存通过 junction 放在 `CODEX_HOME` 之外，用户级和 Desktop 生成后的 `NODE_REPL_TRUSTED_CODE_PATHS` 都必须包含其解析后的物理 marketplace/cache 根，installed ASAR 必须包含 `CODEX_NODE_REPL_TRUSTED_PATHS_V1`；只在 `config.toml` 写一次 D 盘路径不够，因为未修补的 Desktop 会在重启时覆盖它。`setupBrowserRuntime()` 成功且 `agent.browsers.get("chrome")` 返回真实 Chrome 扩展后端。随后真实 smoke test 应能读到受控标签页标题，例如 `Example Domain`。Chrome 未运行时，无需再次征得用户授权，直接自动启动后验证 `https://example.com/`、`Example Domain` 标题和唯一且文本匹配的 `h1`。
-- 如果修复手机远控，连接页应显示手机/移动设备设置路径，二维码应出现，手机扫码不再提示 Codex 版本过期；按 WindowsApps native PID/路径关联的日志应出现 `remote_control_websocket_proxy_connected` 和 `Connected` 且没有重复 `os error 10060`，手机发送消息能到达 Desktop。部分 native 版本会静默处理 Ping/Pong，因此不得把帧日志文字当作唯一成功条件。
-- 如果修复会话消失，`sync-codex-provider-history.ps1` 应显示 App/legacy SQLite 和 readable rollout 的 provider 已对齐到当前 `model_provider`，`config.toml sha256 unchanged`，官方侧边栏能看到历史会话，并且不会新增空项目分组。如果修的是“恢复后无法继续”，`missing rollout cwd dirs after` 应为 0 或只剩已审查跳过的路径，受影响会话重启后能发送新消息。
-
-## 备份管理
-
-修复脚本在写入 `config.toml` 前会自动把旧文件备份到 `.codex\backups\config\`。如果要手动备份或迁移本地 Codex 的关键状态，可以使用独立备份脚本：
+查看状态：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
+Get-ScheduledTask -TaskName 'Codex Desktop Post-Update Repair'
+Get-Content "$env:USERPROFILE\.codex\automation\update-cycle-active.json" -Raw
 ```
 
-列出现有备份：
+修复失败原因后，显式重试当前商店版本（会关闭 Codex，请在外部 PowerShell 运行）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
+$root = Join-Path $env:USERPROFILE '.codex\automation'
+$authorization = Get-Content (Join-Path $root 'standing-update-authorization.json') -Raw | ConvertFrom-Json
+& (Join-Path $root 'invoke-codex-standing-update.ps1') -StandingAuthorizationId $authorization.authorization_id -RetryFailedVersion
 ```
 
-从某个备份恢复：
+更新仓库代码并检查差异后，重新部署脚本，不更改现有授权：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1
 ```
 
-默认备份自定义 skills、marketplaces、`config.toml`、解析出的 `mcp_servers.json` 和 `chrome-native-hosts.json`，并排除 `.git`、`node_modules`、构建产物和虚拟环境等容易变大的目录。需要完整离线依赖副本时再加 `-IncludeDependencyDirs`；插件缓存和 `.tmp\bundled-marketplaces` 也可能较大，需要时再加 `-IncludePluginCache` 或 `-IncludeTmpBundledMarketplaces`。
+本 fork 不在调用技能或补丁失败时自动同步上游。代码更新应显式进行，保留自己的本地修改。
 
-## 致谢
+暂停未来自动运行：
 
-感谢 [LinuxDo community](https://linux.do/) 中相关讨论和反馈对这个工作流的启发。
+```powershell
+Disable-ScheduledTask -TaskName 'Codex Desktop Post-Update Repair'
+```
+
+此命令不终止正在执行的安装。不要在包部署过程中直接杀死安装进程。
+
+## 失败、恢复与清理
+
+独立 CLI 位于 `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<版本>`，不依赖卸载后消失的 WindowsApps 路径。自动打开终端只代表 CLI 入口可用，不代表网络或模型请求成功。
+
+商店包替换后若安装失败，桌面版可能暂时不可用，流程会打开 CLI，不会自动回装商店版。可以随后通过 Microsoft Store 重新安装桌面版。原版恢复安装包无需预先准备；**应用数据备份仍然必需**。
+
+本机运行数据在 `%USERPROFILE%\.codex\automation`：
+
+| 位置 | 用途 |
+| --- | --- |
+| `logs` | 阶段进度、子进程输出和失败原因 |
+| `install-handoffs\<运行ID>\appdata-backup` | 替换前的应用数据及哈希清单，不自动清理 |
+| `install-handoffs\<运行ID>\build` | 本次构建缓存，仅稳定成功后按清单删除 |
+| `install-handoffs\<运行ID>` | 签名补丁包和安装交接记录 |
+| `store-recovery\<版本>\original.msix` | 可选的原版签名商店包 |
+
+不上传这些目录、授权 JSON、凭据、日志或安装包。更多边界见 [自动更新与清理说明](references/local-post-update-safety.md)。
+
+## 验证状态
+
+已为 26.917 系列集成 CUA readiness 适配、旧补丁迁移和代理环境传递。26.917.8451.0 的离线 bundle 校验已通过；这不等于真实安装、重启或 Chrome 操作验证通过。自动化测试使用隔离文件与模拟部署命令，不会卸载当前应用。
+
+```powershell
+pwsh.exe -NoProfile -File .\automation\tests\test-update-safety.ps1
+pwsh.exe -NoProfile -File .\automation\tests\test-appdata-backup.ps1
+pwsh.exe -NoProfile -File .\automation\tests\test-update-progress.ps1
+pwsh.exe -NoProfile -File .\automation\tests\test-superseded-watcher.ps1
+pwsh.exe -NoProfile -File .\scripts\test-computer-use-surface-patterns.ps1 -TemporaryRoot "$env:TEMP\codex-auto-repatch-tests"
+```
+
+## 来源
+
+此项目是 [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill) 的派生项目，保留其补丁工具与 Git 历史，并整合适用的社区修复。本 README 为本 fork 重写，自动化更新、CLI 回退和清理流程以本仓库实现为准。此项目不是 OpenAI 官方项目。

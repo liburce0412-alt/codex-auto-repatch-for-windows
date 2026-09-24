@@ -3,7 +3,14 @@ name: codex-windows-fast-patch
 description: Reapply and repair Windows Codex Desktop after Store upgrades, including custom provider models hidden by Statsig available_models filtering, the dependent blue-purple Power slider and its Ultra toggle, Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
 ---
 
-# Codex Windows Fast Patch
+# Codex Auto Repatch for Windows
+
+This fork publishes the external update executor in `automation/`. Deploy it with
+`scripts/install-update-automation.ps1`; use `-EnableAutomation` only when the user
+has requested continuing automatic repair. Existing authorizations are preserved
+by a normal deployment. See the rewritten [README](README.md) for installation,
+live progress, independent CLI fallback and manifest-based cleanup. Keep the skill
+directory name `codex-windows-fast-patch` for compatibility.
 
 The local post-update workflow uses `-OnlyBrowserComputerUse -IncludeCustomModelVisibility -ForceRebuild`. This mode also validates and patches the Windows CUA surface gates in the same ASAR pass, including dry-run and already-patched checks. Missing, partial, or ambiguous surface patterns stop the repair before packaging. Do not combine it with `-OnlyComputerUseSurface`. Future Desktop layouts still require validation; this does not establish real UI acceptance.
 

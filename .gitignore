@@ -5,3 +5,15 @@ codex-msix-repack/
 work-*/
 artifacts/
 backups/
+
+# Automation source only: never publish local authorization, data, or builds.
+automation/tests/fixture-*/
+automation/tests/progress-fixture-*/
+automation/logs/
+automation/install-handoffs/
+automation/store-recovery/
+automation/*.json
+automation/*.lock
+*.msix
+*.pfx
+*.p12

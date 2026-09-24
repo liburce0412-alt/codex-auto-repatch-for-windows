@@ -26,8 +26,15 @@ this authorization's install handoff directory for later manual recovery.
 The watcher does not download or fabricate official recovery media. Missing or
 invalid recovery media does not block installation of a validated patch. Patch
 identity, exact version, hash, signature, producer and runtime contract remain
-mandatory. Never fall back from
-`Remove-AppxPackage -PreserveApplicationData` to ordinary removal.
+mandatory. The Store package is not a loose-file development registration, so
+`Remove-AppxPackage -PreserveApplicationData` is not applicable. Before normal
+exact-current-user removal, stop the app and create a mandatory, hash-verified
+application-data snapshot. A backup failure stops removal. Restore user data
+before restarting the patched app; retain Windows-owned SystemAppData, AC and
+TempState only in the snapshot, without overwriting new deployment metadata.
+The snapshot is separate from optional original installation media and is not
+part of build cleanup. Known Windows AppX-volume junctions must match the
+current SID and exact package family; unknown or nested links fail closed.
 
 Before replacement, verify the independent CLI under
 `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>` and its companion files.
@@ -54,7 +61,7 @@ checks have passed. It revalidates the run ID, state, path boundaries, absence
 of reparse points and every file's content. Changed or extra files defer cleanup.
 
 Remove only the recorded build files and empty build directories. Keep the
-official recovery MSIX, signed patched MSIX, handoff records, compact logs and
+application-data backup, optional official recovery MSIX, signed patched MSIX, handoff records, compact logs and
 cleanup report. Keep configuration, credentials, conversation data, runtime and
 all unrelated paths. Failed runs retain build/evidence for diagnosis; deletion
 of old failed runs is a separate manifest-based cleanup after recovery is proven.
