@@ -4,7 +4,7 @@ The local automatic repair mode `-OnlyBrowserComputerUse` includes the Windows C
 
 Language: [中文](README.md) | English
 
-This is the public version of the `codex-windows-fast-patch` skill. It helps Agent-Skills-capable agents repair common Windows Codex Desktop features that break after Desktop updates.
+This is a local-repair fork of the `codex-windows-fast-patch` skill. It helps Agent-Skills-capable agents repair common Windows Codex Desktop features that break after Desktop updates. The upstream project is [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill). This fork preserves upstream history and adds local Windows compatibility fixes and an explicit-only update policy.
 
 ## Features
 
@@ -22,7 +22,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists; if a restored conversation is visible but cannot continue because its working directory is missing, recreate the missing empty directory from the rollout `cwd`.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
-- Automatically update this skill to the latest version before each repair attempt.
+- Check and merge GitHub updates only when explicitly requested, preserving local repairs and configuration.
 
 ## Platform Support
 
@@ -73,10 +73,10 @@ The skill directory is a clone of this repository, so `git clone` it straight in
 
 ```powershell
 # Codex
-git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
+git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
 # Claude Code
-git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
+git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
 Any other agent that supports Agent Skills works the same way: point the destination at its own skills root. The full history takes about 800 KB, less than the working tree itself.
@@ -89,9 +89,7 @@ If your harness installs skills through a plugin or marketplace mechanism, that 
 
 After installation, ask an agent that supports Agent Skills to use the `codex-windows-fast-patch` workflow for the Codex Desktop issue on the current machine.
 
-Updating this skill is `git pull`. Before substantive work the agent runs a cheap check — `git fetch` plus `git rev-list --count 'HEAD..@{u}'` (PowerShell needs the single quotes, otherwise `@{u}` is parsed as a hashtable) — and skips the rest when the count is `0`; only a non-zero count makes it read `git log` and decide whether to pull. It checks again when a patch step fails (a missing helper profile, a pattern that no longer matches, an unrecognized Desktop build), because that is exactly the case where upstream may already carry the fix.
-
-Local edits are not wiped out. When your edits and the update touch different files, `git pull --ff-only` fast-forwards and keeps your edits in place. When they touch the same file, git refuses the pull, names the blocking file, and leaves your edit on disk — resolve it with `git stash`, then `git pull --ff-only`, then `git stash pop` (expect conflict markers from `stash pop` if your edit and the update changed the same lines). Local commits make the branches diverge, so `--ff-only` refuses and `git pull --rebase` replays them on top of the update. Helper profiles and repair guards you added yourself are therefore safe. Change the update source with `git remote set-url origin <your-fork>`, and roll back with `git checkout <older-commit>`. When the network is unavailable the update step is skipped, the agent continues with the currently installed local version, and it states in the conclusion that the update did not run.
+This fork does not automatically synchronize GitHub when invoked, before repairs, or after a patch failure. Only an explicit request to check, update, or merge authorizes inspecting the worktree and remotes, fetching updates, comparing commits, and merging. Preserve uncommitted changes and resolve conflicts individually; do not clear the worktree, automatically stash changes, or force-reset it to complete an update. Preserve an existing `.skill-auto-update-disabled` marker. If the network is unavailable, continue with the installed version. See the Explicit-Only GitHub Update Policy in `SKILL.md` for the workflow.
 
 The scripts are reference implementations and operational templates, not a one-command fix that is guaranteed to work on every machine. A real run should first read `SKILL.md`, inspect the current Codex installation method, MSIX package path, ASAR contents, signing tools, plugin directories, and Computer Use file state, then decide whether to execute, adapt, or only borrow steps from the scripts.
 

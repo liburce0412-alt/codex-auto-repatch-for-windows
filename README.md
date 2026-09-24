@@ -4,7 +4,7 @@
 
 语言：中文 | [English](README.en.md)
 
-这是 `codex-windows-fast-patch` skill 的公开版本，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。
+这是 `codex-windows-fast-patch` skill 的本地修复分叉，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。上游项目为 [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill)，本分叉保留上游历史，并加入本地 Windows 兼容修复与显式更新策略。
 
 ## 主要功能
 
@@ -22,7 +22,7 @@
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
 - 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
 - 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
-- 支持每次开始修复前自动将skills更新到最新版本
+- 仅在用户明确要求时检查和合并 GitHub 更新，保留本地修复与配置。
 - 破限只需：帮我配置破限相关文件和config.toml中的相关配置
 
 ## 平台支持
@@ -74,10 +74,10 @@ skill 目录就是这个仓库的一份克隆，直接 `git clone` 到你的智�
 
 ```powershell
 # Codex
-git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
+git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
 # Claude Code
-git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
+git clone https://github.com/liburce0412-alt/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
 其它支持 Agent Skills 的智能体同理，把目标目录换成它自己的 skills 根就行。完整历史只占约 800 KB，比工作树本身还小。
@@ -90,9 +90,7 @@ git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git 
 
 安装后，让支持 Agent Skills 的智能体使用 `codex-windows-fast-patch` 工作流处理当前机器上的 Codex Desktop 问题。
 
-这个 skill 的更新就是 `git pull`。智能体正式开工前先做一次极轻的检查：`git fetch` 加 `git rev-list --count 'HEAD..@{u}'`（PowerShell 里 `@{u}` 必须加单引号，否则会被解析成 hashtable），计数为 0 就直接跳过，非 0 才看 `git log` 决定是否拉取。补丁步骤失败时（helper profile 缺失、pattern 不再命中、Desktop 版本不认识）会再检查一次，因为这正是上游可能已经修好的情况。
-
-本地改动不会被抹掉。上游改的文件和你改的文件不重叠时，`git pull --ff-only` 会正常快进并保留你的改动；重叠时 git 会拒绝拉取、点名冲突文件，并把你的改动完整留在磁盘上，用 `git stash` 拉取后再 `git stash pop` 处理（如果改的正是同几行，`stash pop` 会留下冲突标记，需要手动解决）；已经本地 commit 则分支分叉，`--ff-only` 拒绝，用 `git pull --rebase` 把本地提交重放到更新之上。你自己加的 helper profile 和修复护栏因此是安全的。想换更新源就 `git remote set-url origin <你的 fork>`，想回退就 `git checkout <旧提交>`。网络不通时更新会被跳过，智能体继续用当前本地版本处理问题，并在结论里说明未能更新。
+本分叉不在技能调用、修复开始或补丁失败时自动同步 GitHub。只有用户明确要求检查、更新或合并时，才检查工作区和远端、获取更新、比较提交并合并。已有未提交改动必须保留；发生冲突时逐项处理，不通过清空工作区、自动 stash 或强制重置来完成更新。保留已有的 `.skill-auto-update-disabled` 标记。网络不可用时继续使用已安装版本。具体流程见 `SKILL.md` 的 Explicit-Only GitHub Update Policy。
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录、Computer Use 文件状态和远控相关日志，再决定执行、改写或只借鉴其中步骤。
 
