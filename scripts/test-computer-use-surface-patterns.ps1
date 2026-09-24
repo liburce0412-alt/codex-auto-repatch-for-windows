@@ -89,6 +89,8 @@ $positiveSource = @'
 function exposePlugin(r,i,a,e){if(!r.installed||i==null||a&&e.platform!==`darwin`)return null;return true;}
 function buildSurface(f,l,t,u){let p;p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null;return p;}
 '@
+$gateSource = $positiveSource
+$positiveSource += '/*computerUseNodeRepl*/'
 $positive = Invoke-PatcherFixture -Name 'current-darwin-gates' -Source $positiveSource -ExpectedExitCode 0
 if ($positive.Output -cne 'patched') {
   throw "positive fixture did not report patched: $($positive.Output)"
@@ -100,7 +102,7 @@ if (-not $patched.Contains('CODEX_CUA_WINDOWS_SURFACE_V1')) {
 if (-not $patched.Contains('e.platform!==`darwin`&&e.platform!==`win32`')) {
   throw 'positive fixture did not admit win32 in the plugin exposure gate'
 }
-if (-not $patched.Contains('l.platform===`win32`&&t.computerUse)') -or $patched.Contains('t.computerUseNodeRepl')) {
+if (-not $patched.Contains('l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)')) {
   throw 'positive fixture did not admit win32 in the generated CUA surface gate'
 }
 & $node.Source --check $positive.AssetPath 2>&1 | Out-Null
@@ -134,7 +136,7 @@ for (const platform of ['darwin', 'win32', 'linux']) {
   for (const f of [false, true]) for (const computerUse of [false, true])
   for (const computerUseNodeRepl of [undefined, false, true]) for (const enabled of [false, true])
   for (const serviceAppPath of [null, '/service']) {
-    const expected = f && computerUse && (platform === 'win32' ? true :
+    const expected = f && computerUse && (platform === 'win32' ? computerUseNodeRepl :
       platform === 'darwin' && enabled && serviceAppPath !== null);
     const actual = context.buildSurface(f, {platform}, {computerUse, computerUseNodeRepl},
       {enabled, paths: {serviceAppPath}});
@@ -152,6 +154,53 @@ console.log(`CUA_BEHAVIOR_MATRIX_PASSED cases=${cases}`);
 '@, [Text.UTF8Encoding]::new($false))
 & $node.Source $behaviorPath $positive.AssetPath
 if ($LASTEXITCODE -ne 0) { throw 'CUA platform/feature behavior matrix failed' }
+
+$modernReadiness = 'function ready(t,o,a,n,e,s){return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`}'
+$modernSource = $gateSource + $modernReadiness
+$modern = Invoke-PatcherFixture -Name 'current-without-node-repl-flag' -Source $modernSource -ExpectedExitCode 0
+$modernPatched = [IO.File]::ReadAllText($modern.AssetPath)
+if ($modern.Output -cne 'patched' -or $modernPatched.Contains('computerUseNodeRepl')) {
+  throw 'modern layout must not add a removed feature dependency'
+}
+$modernSecond = Invoke-PatcherFixture -Name 'modern-idempotent' -Source $modernPatched -ExpectedExitCode 0
+if ($modernSecond.Output -cne 'already-patched' -or [IO.File]::ReadAllText($modernSecond.AssetPath) -cne $modernPatched) {
+  throw 'modern layout is not idempotent'
+}
+$modernBehaviorPath = Join-Path $fixtureRoot 'modern-behavior.cjs'
+[IO.File]::WriteAllText($modernBehaviorPath, @'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
+let cases = 0;
+for (const platform of ['darwin', 'win32', 'linux']) {
+  for (const f of [false, true]) for (const computerUse of [false, true])
+  for (const enabled of [false, true]) for (const serviceAppPath of [null, '/service']) {
+    const expected = f && computerUse && (platform === 'win32' ||
+      platform === 'darwin' && enabled && serviceAppPath !== null);
+    assert.equal(context.buildSurface(f, {platform}, {computerUse}, {enabled, paths:{serviceAppPath}}), expected);
+    cases++;
+  }
+}
+for (const browserUseTinysky of [false, true]) for (const wsl of [false, true])
+for (const nodePath of [null, '/node']) for (const nodeReplPath of [null, '/repl'])
+for (const exposure of [false, true]) for (const installed of [false, true])
+for (const enabled of [false, true]) for (const availability of ['AVAILABLE','DISABLED']) {
+  const ready = !!context.ready({browserUseTinysky}, wsl, {nodePath,nodeReplPath},
+    {Gu:()=>exposure}, 'version', {plugin:{installed,enabled,availability}});
+  const expected = browserUseTinysky && !wsl && nodePath !== null && nodeReplPath !== null &&
+    exposure && installed && enabled && availability === 'AVAILABLE';
+  assert.equal(ready, expected);
+  assert.equal(context.buildSurface(ready,{platform:'win32'},{computerUse:true},{enabled:false,paths:{serviceAppPath:null}}),expected);
+  cases++;
+}
+console.log(`MODERN_CUA_BEHAVIOR_MATRIX_PASSED cases=${cases}`);
+'@, [Text.UTF8Encoding]::new($false))
+& $node.Source $modernBehaviorPath $modern.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'modern CUA readiness/platform behavior matrix failed' }
+& $node.Source --check $modern.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'modern CUA output syntax check failed' }
 
 $negativeSource = 'const unrelated={platform:`darwin`,computerUse:true};'
 $negative = Invoke-PatcherFixture -Name 'unknown-layout' -Source $negativeSource -ExpectedExitCode 2
@@ -179,9 +228,33 @@ function Assert-RejectedUnchanged {
   }
 }
 
+# PR #62 must migrate using the verified layout, not just the marker.
+$modernGate = 'p=f&&t.computerUse&&(l.platform===`darwin`&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`)'
+$pr62Gate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)'
+$legacyGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)'
+foreach ($migration in @(
+  @{ Name='pr62-modern'; Source=$modernPatched.Replace($modernGate,$pr62Gate); Expected=$modernPatched },
+  @{ Name='pr62-legacy'; Source=$patched.Replace($legacyGate,$pr62Gate); Expected=$patched },
+  @{ Name='old-patch-on-modern'; Source=$modernPatched.Replace($modernGate,$legacyGate); Expected=$modernPatched }
+)) {
+  $result = Invoke-PatcherFixture $migration.Name $migration.Source 0
+  if ($result.Output -cne 'patched' -or [IO.File]::ReadAllText($result.AssetPath) -cne $migration.Expected) {
+    throw "migration failed: $($migration.Name)"
+  }
+  $again = Invoke-PatcherFixture ($migration.Name+'-again') $migration.Expected 0
+  if ($again.Output -cne 'already-patched' -or [IO.File]::ReadAllText($again.AssetPath) -cne $migration.Expected) { throw 'migration is not idempotent' }
+}
+foreach ($source in @($modernSource, $modernPatched, $modernPatched.Replace($modernGate,$pr62Gate))) {
+  Assert-RejectedUnchanged ('corrupt-ready-'+[guid]::NewGuid()) ($source.Replace('t.browserUseTinysky','t.unknownFlag'))
+  Assert-RejectedUnchanged ('duplicate-ready-'+[guid]::NewGuid()) ($source + $modernReadiness)
+}
+Assert-RejectedUnchanged 'missing-readiness' $gateSource
+Assert-RejectedUnchanged 'mixed-readiness' ($modernSource + '/*computerUseNodeRepl*/')
+Write-Output 'PR62_MIGRATION_AND_READINESS_GUARDS_PASSED'
+
 Assert-RejectedUnchanged 'marker-only' '/*CODEX_CUA_WINDOWS_SURFACE_V1*/const unrelated=1;'
 Assert-RejectedUnchanged 'marker-with-original-gates' ($positiveSource + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
-Assert-RejectedUnchanged 'marker-with-corrupt-gate' ($patched.Replace('l.platform===`win32`&&t.computerUse)', 'l.platform===`win32`&&t.unknownFlag)'))
+Assert-RejectedUnchanged 'marker-with-corrupt-gate' ($patched.Replace('t.computerUseNodeRepl)', 't.unknownFlag)'))
 Assert-RejectedUnchanged 'mixed-current-legacy-patches' ($patched + $legacyPatched)
 Assert-RejectedUnchanged 'patched-without-marker' ($patched.Replace('/*CODEX_CUA_WINDOWS_SURFACE_V1*/', ''))
 Assert-RejectedUnchanged 'duplicate-marker' ($patched + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
@@ -217,14 +290,14 @@ $metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces computerUseNodeRepl*/'
 [IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'content-based selection failed' }
 $metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/'
-[IO.File]::WriteAllText($candidate, $positiveSource + $metadata)
+[IO.File]::WriteAllText($candidate, $modernSource + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw '26.917 selection without retired flag failed' }
 [IO.File]::WriteAllText($candidate, $patched + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'patched target selection failed' }
 $secondCandidate = Join-Path $buildRoot 'second-main.js'
 [IO.File]::WriteAllText($secondCandidate, $positiveSource + $metadata)
 Assert-Fails { Find-ComputerUseSurfaceTarget $selectionRoot } '*exactly one*found 2*'
-Remove-Item -LiteralPath $secondCandidate -Force
+Remove-Item -LiteralPath $secondCandidate
 [IO.File]::WriteAllText($candidate, 'const unrelated=1;')
 Assert-Fails { Find-ComputerUseSurfaceTarget $selectionRoot } '*exactly one*found 0*'
 [IO.File]::WriteAllText($candidate, '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
@@ -304,7 +377,8 @@ Write-Output 'ASAR_RUNNER_FALLBACK_PASSED'
   }, $true)
   if (-not $branch) { throw 'automatic Browser/Computer Use branch missing' }
   $body = $branch.Clauses[0].Item2.Extent.Text
-  $runBranch = [scriptblock]::Create($body.Substring(1, $body.Length - 2))
+  $fixturePatcherRoot = Split-Path -Parent $scriptPath
+  $runBranch = [scriptblock]::Create($body.Substring(1, $body.Length - 2).Replace('$PSScriptRoot', '$fixturePatcherRoot'))
   $extractDir = $selectionRoot
   $nodePath = $node.Source
   $patchers = @{ BrowserUse='browser'; ComputerUse='computer'; NodeReplTrustedPaths='trusted'; CustomModels='models'; ComputerUseSurface=$patcherPath }
@@ -354,5 +428,5 @@ Write-Output 'ASAR_RUNNER_FALLBACK_PASSED'
   Write-Output 'AUTOMATIC_CUA_SURFACE_INTEGRATION_PASSED'
 }
 
-Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+Remove-Item -LiteralPath $fixtureRoot -Recurse
 Write-Output "Windows CUA surface regression passed: $fixtureRoot"

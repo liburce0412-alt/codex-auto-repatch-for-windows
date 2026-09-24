@@ -1806,10 +1806,11 @@ const marker = 'CODEX_CUA_WINDOWS_SURFACE_V1';
 const originalPluginGate = 'if(!r.installed||i==null||a&&e.platform!==`darwin`)return null;';
 const patchedPluginGate = 'if(!r.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;';
 const originalSurfaceGate = 'p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null';
-// Desktop 26.917 removed the computerUseNodeRepl feature flag from the bundle;
-// the win32 branch now relies on t.computerUse alone (forced by
-// CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE=1 in the feature sender).
-const patchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)';
+// Recognize the removed flag only when the complete 26.917 readiness predicate
+// is present. Preserve that predicate and the legacy flag on older bundles.
+const modernReadiness = 'return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`';
+const modernPatchedSurfaceGate = 'p=f&&t.computerUse&&(l.platform===`darwin`&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`)';
+const pr62PatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)';
 const legacyPatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)';
 
 function count(value, source = text) {
@@ -1826,24 +1827,41 @@ const pluginCount = count(originalPluginGate);
 const surfaceCount = count(originalSurfaceGate);
 const markerCount = count(marker);
 const patchedPluginCount = count(patchedPluginGate);
-const patchedSurfaceCount = count(patchedSurfaceGate);
+const modernPatchedSurfaceCount = count(modernPatchedSurfaceGate);
+const pr62PatchedSurfaceCount = count(pr62PatchedSurfaceGate);
 const legacyPatchedSurfaceCount = count(legacyPatchedSurfaceGate);
-if (markerCount || patchedPluginCount || patchedSurfaceCount || legacyPatchedSurfaceCount) {
+const patchedSurfaceCount = modernPatchedSurfaceCount + pr62PatchedSurfaceCount + legacyPatchedSurfaceCount;
+let existingSurfaceGate = null;
+if (markerCount || patchedPluginCount || patchedSurfaceCount) {
   if (markerCount === 1 && patchedPluginCount === 1 &&
-      (patchedSurfaceCount + legacyPatchedSurfaceCount) === 1 &&
+      patchedSurfaceCount === 1 &&
       pluginCount === 0 && surfaceCount === 0) {
-    process.stdout.write('already-patched');
-    process.exit(0);
+    existingSurfaceGate = modernPatchedSurfaceCount ? modernPatchedSurfaceGate :
+      pr62PatchedSurfaceCount ? pr62PatchedSurfaceGate : legacyPatchedSurfaceGate;
+  } else {
+    process.stderr.write('incomplete or ambiguous CUA surface patch; refusing to modify the asset\n');
+    process.exit(2);
   }
-  process.stderr.write('incomplete or ambiguous CUA surface patch; refusing to modify the asset\n');
-  process.exit(2);
 }
-if (pluginCount !== 1 || surfaceCount !== 1) {
+if (!existingSurfaceGate && (pluginCount !== 1 || surfaceCount !== 1)) {
   process.stderr.write(`current CUA surface anchors not found exactly once: plugin=${pluginCount} surface=${surfaceCount}\n`);
   process.exit(2);
 }
 
-const next = text
+// Ignore a flag introduced only by an older patch when classifying the bundle.
+const layoutText = existingSurfaceGate ? text.replace(existingSurfaceGate, '') : text;
+const modernLayout = count(modernReadiness) === 1 && !layoutText.includes('computerUseNodeRepl');
+const legacyLayout = layoutText.includes('computerUseNodeRepl') && count(modernReadiness) === 0;
+if (!modernLayout && !legacyLayout) {
+  process.stderr.write('unknown or ambiguous CUA readiness layout; refusing to modify the asset\n');
+  process.exit(2);
+}
+const patchedSurfaceGate = modernLayout ? modernPatchedSurfaceGate : legacyPatchedSurfaceGate;
+if (existingSurfaceGate === patchedSurfaceGate) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+const next = existingSurfaceGate ? text.replace(existingSurfaceGate, patchedSurfaceGate) : text
   .replace(originalPluginGate, `${patchedPluginGate}/*${marker}*/`)
   .replace(originalSurfaceGate, patchedSurfaceGate);
 
@@ -2578,11 +2596,11 @@ function Find-ComputerUseSurfaceTarget {
   }
   $candidates = @(foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File)) {
     $text = [IO.File]::ReadAllText($candidate.FullName)
-    # Desktop 26.917 dropped the computerUseNodeRepl flag; it is no longer
-    # required as an anchor so both pre-26.917 and 26.917+ bundles match.
+    $modernReadiness = 'return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`'
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
+         ($text.Contains('computerUseNodeRepl') -or $text.Contains($modernReadiness)) -and
          $text.Contains('serviceAppPath!=null') -and
          $text.Contains('platform===`darwin`'))) {
       $candidate.FullName
