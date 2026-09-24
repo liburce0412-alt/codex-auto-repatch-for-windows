@@ -188,7 +188,7 @@ for (const nodePath of [null, '/node']) for (const nodeReplPath of [null, '/repl
 for (const exposure of [false, true]) for (const installed of [false, true])
 for (const enabled of [false, true]) for (const availability of ['AVAILABLE','DISABLED']) {
   const ready = !!context.ready({browserUseTinysky}, wsl, {nodePath,nodeReplPath},
-    {Gu:()=>exposure}, 'version', {plugin:{installed,enabled,availability}});
+    {Gu:()=>exposure,Wu:()=>exposure}, 'version', {plugin:{installed,enabled,availability}});
   const expected = browserUseTinysky && !wsl && nodePath !== null && nodeReplPath !== null &&
     exposure && installed && enabled && availability === 'AVAILABLE';
   assert.equal(ready, expected);
@@ -252,6 +252,18 @@ Assert-RejectedUnchanged 'missing-readiness' $gateSource
 Assert-RejectedUnchanged 'mixed-readiness' ($modernSource + '/*computerUseNodeRepl*/')
 Write-Output 'PR62_MIGRATION_AND_READINESS_GUARDS_PASSED'
 
+$source8451 = $modernSource.Replace('n.Gu(', 'n.Wu(')
+$result8451 = Invoke-PatcherFixture 'store-8451' $source8451 0
+$patched8451 = [IO.File]::ReadAllText($result8451.AssetPath)
+if ($result8451.Output -cne 'patched' -or $patched8451 -cne $modernPatched.Replace('n.Gu(', 'n.Wu(')) { throw '8451 migration mismatch' }
+& $node.Source $modernBehaviorPath $result8451.AssetPath
+if ($LASTEXITCODE) { throw '8451 readiness behavior matrix failed' }
+$again8451 = Invoke-PatcherFixture 'store-8451-again' $patched8451 0
+if ($again8451.Output -cne 'already-patched') { throw '8451 not idempotent' }
+Assert-RejectedUnchanged 'mixed-ready-symbols' ($source8451 + $modernReadiness)
+Assert-RejectedUnchanged 'unknown-ready-symbol' ($source8451.Replace('n.Wu(', 'n.Unknown('))
+Assert-RejectedUnchanged 'corrupt-ready-8451' ($source8451.Replace('a.nodePath!=null', 'true'))
+
 Assert-RejectedUnchanged 'marker-only' '/*CODEX_CUA_WINDOWS_SURFACE_V1*/const unrelated=1;'
 Assert-RejectedUnchanged 'marker-with-original-gates' ($positiveSource + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
 Assert-RejectedUnchanged 'marker-with-corrupt-gate' ($patched.Replace('t.computerUseNodeRepl)', 't.unknownFlag)'))
@@ -292,6 +304,8 @@ if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'con
 $metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/'
 [IO.File]::WriteAllText($candidate, $modernSource + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw '26.917 selection without retired flag failed' }
+[IO.File]::WriteAllText($candidate, $source8451 + $metadata)
+if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw '8451 selection failed' }
 [IO.File]::WriteAllText($candidate, $patched + $metadata)
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'patched target selection failed' }
 $secondCandidate = Join-Path $buildRoot 'second-main.js'

@@ -1809,6 +1809,8 @@ const originalSurfaceGate = 'p=f&&l.platform===`darwin`&&t.computerUse&&u.enable
 // Recognize the removed flag only when the complete 26.917 readiness predicate
 // is present. Preserve that predicate and the legacy flag on older bundles.
 const modernReadiness = 'return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`';
+// Store 26.917.8451 uses Wu for the same verified version capability check.
+const modernReadiness8451 = modernReadiness.replace('n.Gu(', 'n.Wu(');
 const modernPatchedSurfaceGate = 'p=f&&t.computerUse&&(l.platform===`darwin`&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`)';
 const pr62PatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)';
 const legacyPatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)';
@@ -1850,8 +1852,9 @@ if (!existingSurfaceGate && (pluginCount !== 1 || surfaceCount !== 1)) {
 
 // Ignore a flag introduced only by an older patch when classifying the bundle.
 const layoutText = existingSurfaceGate ? text.replace(existingSurfaceGate, '') : text;
-const modernLayout = count(modernReadiness) === 1 && !layoutText.includes('computerUseNodeRepl');
-const legacyLayout = layoutText.includes('computerUseNodeRepl') && count(modernReadiness) === 0;
+const readinessCount = count(modernReadiness) + count(modernReadiness8451);
+const modernLayout = readinessCount === 1 && !layoutText.includes('computerUseNodeRepl');
+const legacyLayout = layoutText.includes('computerUseNodeRepl') && readinessCount === 0;
 if (!modernLayout && !legacyLayout) {
   process.stderr.write('unknown or ambiguous CUA readiness layout; refusing to modify the asset\n');
   process.exit(2);
@@ -2600,7 +2603,8 @@ function Find-ComputerUseSurfaceTarget {
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
-         ($text.Contains('computerUseNodeRepl') -or $text.Contains($modernReadiness)) -and
+         ($text.Contains('computerUseNodeRepl') -or $text.Contains($modernReadiness) -or
+          $text.Contains($modernReadiness.Replace('n.Gu(', 'n.Wu('))) -and
          $text.Contains('serviceAppPath!=null') -and
          $text.Contains('platform===`darwin`'))) {
       $candidate.FullName
