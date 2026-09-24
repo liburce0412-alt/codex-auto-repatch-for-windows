@@ -12,30 +12,37 @@ stdout/stderr and nested patch/build logs while the processes run. It shows a
 heartbeat during silent work, not an invented percentage. Closing the viewer
 does not cancel the worker. Results remain visible until Enter is pressed.
 
-## Store fallback
+## CLI fallback (user choice, 2026-09-24)
 
-Before any Store removal, the watcher requires
+The user cancelled mandatory recovery media and explicitly chose CLI fallback.
+The watcher may optionally retain
 `store-recovery\<exact-version>\original.msix` under the automation directory.
 This must be the original signed x64 Store MSIX, not an extracted folder or a
 locally re-signed build. It verifies Authenticode, manifest identity, version,
 architecture and the embedded signature against `AppxSignature.p7x` of the
-registered Store package. It copies and hashes the verified original into this
-authorization's install handoff directory and rechecks it before deployment.
+registered Store package. If available and valid, the original is copied into
+this authorization's install handoff directory for later manual recovery.
 
 The watcher does not download or fabricate official recovery media. Missing or
-invalid media blocks replacement and keeps Store installed; a successful local
-patch build in that case is **not** an installed patch. Never fall back from
+invalid recovery media does not block installation of a validated patch. Patch
+identity, exact version, hash, signature, producer and runtime contract remain
+mandatory. Never fall back from
 `Remove-AppxPackage -PreserveApplicationData` to ordinary removal.
 
-If patch installation, finalization or stable-start verification fails, keep an
-intact Store package, or attempt restoration from the verified original, then
-check the exact package and window responsiveness. A rollback deployment can
-itself fail; report that result and retain the recovery files. Never claim Store
-was restored based only on an installation command's exit code.
+Before replacement, verify the independent CLI under
+`%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>` and its companion files.
+The main CLI hash must match the state recorded when copied from the package.
+If preparation, installation, finalization or stable-start verification fails,
+open an interactive CLI terminal once, with the failure reason and log location.
+Use existing model routing and configuration; send no automatic task prompt.
+Do not uninstall or redeploy a package as part of this failure fallback. Retain
+diagnostic files. A terminal launch is not proof of successful CLI API access.
 
 After a failed attempt, the standing task does not keep restarting the same
 Store version. A newer Store version is eligible; a deliberate exact-version
-retry uses the existing armer after the failure is fixed.
+retry uses `invoke-codex-standing-update.ps1 -RetryFailedVersion` with the existing
+standing authorization after the failure is fixed. Do not add that flag to the
+recurring standing task.
 
 ## Cleanup
 
