@@ -72,6 +72,8 @@ Disable-ScheduledTask -TaskName 'Codex Desktop Post-Update Repair'
 
 商店包替换后若安装失败，桌面版可能暂时不可用，流程会打开 CLI，不会自动回装商店版。可以随后通过 Microsoft Store 重新安装桌面版。原版恢复安装包无需预先准备；**应用数据备份仍然必需**。
 
+应用数据位于其他 AppX 卷且带有 EFS 加密属性时，普通文件复制可能报“无法加密指定的文件”。备份和恢复现使用文件流复制内容，保留哈希与目录边界校验；备份失败仍会阻止卸载。遇到此错误后，先更新并重新部署自动化脚本，再按上文显式重试。详见 [加密文件备份案例](references/local-post-update-safety.md#encrypted-application-data-2026-09-24)。
+
 本机运行数据在 `%USERPROFILE%\.codex\automation`：
 
 | 位置 | 用途 |
@@ -86,7 +88,7 @@ Disable-ScheduledTask -TaskName 'Codex Desktop Post-Update Repair'
 
 ## 验证状态
 
-已为 26.917 系列集成 CUA readiness 适配、旧补丁迁移和代理环境传递。26.917.8451.0 的离线 bundle 校验已通过；这不等于真实安装、重启或 Chrome 操作验证通过。自动化测试使用隔离文件与模拟部署命令，不会卸载当前应用。
+已为 26.917 系列集成 CUA readiness 适配、旧补丁迁移和代理环境传递。2026-09-24 在本机完成了 26.917.8451.0 的真实安装：加密文件备份修复后，应用数据备份与恢复哈希校验、Developer 包安装、重启稳定检查及构建清理均通过；已安装 ASAR 与验证过的补丁包一致，插件及运行时检查、窗口枚举通过。Chrome 实际网页操作尚未验证，这次结果也不代表所有机器或未来版本均兼容。自动化测试仍使用隔离文件与模拟部署命令，不会卸载当前应用。
 
 ```powershell
 pwsh.exe -NoProfile -File .\automation\tests\test-update-safety.ps1

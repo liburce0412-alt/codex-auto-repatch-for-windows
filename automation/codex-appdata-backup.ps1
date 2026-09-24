@@ -1,5 +1,24 @@
 # Package data is independent of the optional original Store MSIX.
 # Keep this snapshot outside build cleanup, including after a successful repair.
+function Copy-CodexDataContent {
+  param([string]$Source, [string]$Destination, [bool]$Overwrite = $false)
+  # File.Copy propagates Store/EFS encryption and can fail across AppX volumes.
+  # Copy readable content into the destination's own filesystem policy instead.
+  $inputStream = [IO.File]::Open($Source, 'Open', 'Read', 'Read')
+  try {
+    $mode = if ($Overwrite) { [IO.FileMode]::Create } else { [IO.FileMode]::CreateNew }
+    $outputStream = [IO.File]::Open($Destination, $mode, 'Write', 'None')
+    try {
+      $inputStream.CopyTo($outputStream)
+      $outputStream.Flush($true)
+    } finally {
+      $outputStream.Dispose()
+    }
+  } finally {
+    $inputStream.Dispose()
+  }
+}
+
 function Get-CodexDataDirectory {
   param([string]$Root, [string]$Name)
   if ((Test-Path -LiteralPath $Root) -and ((Get-Item -LiteralPath $Root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'unexpected package data root junction' }
@@ -71,7 +90,7 @@ function Save-CodexAppDataBackup {
         $destination = Assert-CodexDataPath $BackupRoot $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
-        [IO.File]::Copy($file.FullName, $destination, $false)
+        Copy-CodexDataContent $file.FullName $destination
         if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $hash -or
             (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $hash) { throw 'package data changed during backup' }
         $files += @{path=$relative;length=$file.Length;sha256=$hash}
@@ -114,7 +133,7 @@ function Restore-CodexAppDataBackup {
     New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
     if ((Test-Path -LiteralPath $destination -PathType Leaf) -and
         (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -eq $file.sha256) { continue }
-    [IO.File]::Copy($source, $destination, $true)
+    Copy-CodexDataContent $source $destination $true
     if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $file.sha256) { throw 'restored package data hash mismatch' }
   }
 }

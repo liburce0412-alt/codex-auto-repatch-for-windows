@@ -51,6 +51,41 @@ retry uses `invoke-codex-standing-update.ps1 -RetryFailedVersion` with the exist
 standing authorization after the failure is fixed. Do not add that flag to the
 recurring standing task.
 
+## Encrypted application data (2026-09-24)
+
+On Store version `26.917.8451.0`, the mandatory snapshot failed while copying a
+log from an AppX volume's `WpSystem` package-data directory. The source carried
+the `Encrypted` attribute. `File.Copy` attempted to propagate encryption to the
+backup destination and raised an encryption error. The installer stopped before
+`Remove-AppxPackage`; the current-user package remained `Store / Ok`, and the
+independent CLI fallback opened.
+
+`Copy-CodexDataContent` now streams readable file content into a destination
+created under its own filesystem policy, without copying source EFS attributes.
+It does not decrypt or change the source. Backup uses `CreateNew` to prevent
+overwriting recovery evidence; restore uses `Create` to truncate stale content.
+Streams are disposed on failure. Existing source/destination SHA-256 checks,
+snapshot inventory verification and junction/path checks remain in force.
+
+Regression coverage includes an optional existing encrypted source, content
+round-trip, empty files, truncation of longer restore targets, rejection of an
+existing backup, path traversal, nested junctions and corruption before restore.
+To exercise the EFS path, supply a readable encrypted fixture (its content is
+copied into the local ignored test directory; do not publish that directory):
+
+```powershell
+pwsh.exe -NoProfile -File .\automation\tests\test-appdata-backup.ps1 -EncryptedSourcePath '<path-to-encrypted-fixture>'
+```
+
+After deployment and a deliberate retry under the existing authorization, the
+real cycle backed up and restored 871 files with hash verification, installed
+the exact `Developer / Ok` package, passed stable restart and removed the
+manifest-recorded build cache. A subsequent read-only check confirmed that the
+installed ASAR matched the validated patched artifact, plugin/runtime checks
+passed and window enumeration succeeded. Chrome page interaction was not tested.
+These results describe this local cycle, not blanket compatibility for future
+Store releases. Failed-run evidence remains separate from the successful run.
+
 ## Cleanup
 
 The prepare process uses only

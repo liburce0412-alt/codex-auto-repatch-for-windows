@@ -67,9 +67,11 @@ Runtime records live under `%USERPROFILE%\.codex\automation`. Logs are in `logs`
 
 The independent CLI and companion executables live under `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>`, outside WindowsApps. Opening a terminal does not prove API/network access. Never publish authorization records, credentials, logs, application data, generated packages or signing keys. See [update safety and cleanup](references/local-post-update-safety.md).
 
+When application data on another AppX volume carries EFS encryption, ordinary file copying can fail with an encryption error. Backup and restore now copy file content through streams while retaining hash and path-boundary checks; a failed backup still blocks removal. Update and redeploy the automation scripts before deliberately retrying this failure. See the [encrypted-file backup case](references/local-post-update-safety.md#encrypted-application-data-2026-09-24).
+
 ## Validation
 
-The 26.917 overlay integrates CUA readiness recognition, older patch migration and proxy environment propagation. Offline bundle checks passed for 26.917.8451.0; this does not establish real installation, restart or Chrome acceptance. Automation fixtures use disposable files and mocked deployment commands.
+The 26.917 overlay integrates CUA readiness recognition, older patch migration and proxy environment propagation. A real local installation of 26.917.8451.0 completed on 2026-09-24 after the encrypted-file backup fix: application-data backup and restore hashes, Developer package installation, stable restart and build cleanup passed. The installed ASAR matched the validated patched artifact; plugin/runtime checks and window enumeration passed. Actual Chrome page interaction remains unverified, and this result does not establish compatibility on every machine or future version. Automation fixtures still use disposable files and mocked deployment commands; they do not uninstall the current app.
 
 ```powershell
 pwsh.exe -NoProfile -File .\automation\tests\test-update-safety.ps1
