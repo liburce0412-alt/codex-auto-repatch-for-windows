@@ -1572,6 +1572,19 @@ function Complete-PreparedOneClickRepair {
           $PackageDetails['cleanup_error'] = $_.Exception.Message
           Write-CycleLog "cleanup deferred; Desktop remains successfully repaired: $($_.Exception.Message)"
         }
+        try {
+          Write-UpdateProgress @{ kind='stage'; text='清理历史失败残留与不再使用的旧版 CLI' }
+          . (Join-Path $automationRoot 'codex-history-cleanup.ps1')
+          $history = Invoke-CodexHistoryCleanup -AutomationRoot $automationRoot -AuthorizationId $AuthorizationId
+          $PackageDetails['history_cleanup'] = if ($history.Deferred) { 'deferred' } else { 'completed' }
+          $PackageDetails['history_cleanup_bytes'] = $history.Bytes
+          $PackageDetails['history_cleanup_report'] = $history.Report
+          Write-CycleLog "history cleanup: cleaned=$($history.Cleaned) deferred=$($history.Deferred) bytes=$($history.Bytes); current runtime and latest recovery retained"
+        } catch {
+          $PackageDetails['history_cleanup'] = 'deferred'
+          $PackageDetails['history_cleanup_error'] = $_.Exception.Message
+          Write-CycleLog "history cleanup deferred; Desktop remains successfully repaired: $($_.Exception.Message)"
+        }
         Write-CycleState -Status 'repair-restart-stable' -Details $PackageDetails
         return 0
       }

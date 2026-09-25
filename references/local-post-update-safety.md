@@ -95,11 +95,19 @@ Cleanup runs after the exact Developer package, finalization and stable window
 checks have passed. It revalidates the run ID, state, path boundaries, absence
 of reparse points and every file's content. Changed or extra files defer cleanup.
 
-Remove only the recorded build files and empty build directories. Keep the
-application-data backup, optional official recovery MSIX, signed patched MSIX, handoff records, compact logs and
-cleanup report. Keep configuration, credentials, conversation data, runtime and
-all unrelated paths. Failed runs retain build/evidence for diagnosis; deletion
-of old failed runs is a separate manifest-based cleanup after recovery is proven.
+Remove only recorded files and empty directories. Keep the latest successful
+run's application-data backup and signed patched MSIX, optional official media,
+compact logs and cleanup reports. A second manifest-based pass automatically
+removes superseded handoff directories (including historical failures) and older
+`post-update-<version>` CLI copies after recovery is proven. It first verifies
+the latest completed handoff, recovery artifact hash, backup manifest and running
+Desktop path. Preserve the current run/version, newer or unrecognized versions,
+and executable paths referenced by running processes or active configuration.
+Historical native-host registration entries alone do not establish active use.
+Never follow junctions; persist the inventory outside deletion targets and
+recheck hashes before removing files. Preserve configuration, credentials,
+conversation data, shared runtimes, source and all unrelated paths. Failed runs
+remain available until a later stable successful repair allows this cleanup.
 A cleanup error must not turn a successfully repaired Desktop into a failed
 repair or trigger rollback; report cleanup as deferred.
 

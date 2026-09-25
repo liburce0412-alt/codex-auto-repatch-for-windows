@@ -10,11 +10,13 @@ Reapply compatible local Codex Desktop patches after Microsoft Store updates, sh
 2. An external executor verifies the exact package and prepares a signed patch. A separate terminal streams real stages and child-process logs; closing the viewer does not stop the worker.
 3. Before replacing the Store package, verify the independent CLI, patch identity, version, signature and hashes, then create a verified application-data backup.
 4. Install the exact artifact, restore user application data, finalize the repair and verify a stable Desktop window.
-5. Only after success, remove unchanged build files covered by this run's cleanup manifest. Keep data backups, signed artifacts and diagnostic records.
+5. Only after installation, finalization and stable restart succeed, remove manifest-verified build files, historical failed-install residues, superseded recovery copies and unused older CLI versions. Keep the current runtime, latest recovery package and data backup, and diagnostic records. Active, unknown, newer or changed targets are retained or deferred.
 
 Failures open one interactive CLI terminal with the existing configuration and no automatic prompt. A failed Store version is not retried repeatedly. Original signed Store recovery media is optional; application-data backup is mandatory. If installation fails after removal, Desktop may be unavailable until reinstalled through Microsoft Store; the workflow does not automatically redeploy Store as its fallback.
 
 The automatic scope is Chrome/Browser, Windows Computer Use and custom-model visibility. Other manual tools remain available in [SKILL.md](SKILL.md). Unknown bundle layouts stop preparation instead of being treated as compatible.
+
+The next default-scope or full repack also adds browser profile import exception logging. Look for `Browser profile import exception` after a failure; exceptions use the existing sensitive logging channel without additional request or result logging. This aids diagnosis and is not a confirmed cookie-import fix. Updating the scripts alone does not start an installation or restart Desktop.
 
 ## Install
 
@@ -63,7 +65,7 @@ Disabling the task does not cancel an active deployment. Do not terminate a pack
 
 ## Local records and recovery
 
-Runtime records live under `%USERPROFILE%\.codex\automation`. Logs are in `logs`; each `install-handoffs\<run-id>` contains the artifact and installation records. Its `appdata-backup` is retained, while `build` is eligible for manifest-verified cleanup after stable success. Optional original media belongs at `store-recovery\<version>\original.msix`.
+Runtime records live under `%USERPROFILE%\.codex\automation`. Logs are in `logs`; each `install-handoffs\<run-id>` contains the artifact and installation records. The latest successful run's `appdata-backup` and signed artifact are retained. After a later stable successful installation, superseded run directories become eligible for manifest-verified cleanup, including failed builds. Audit manifests live in `cleanup-reports`. Optional original media belongs at `store-recovery\<version>\original.msix` and is retained.
 
 The independent CLI and companion executables live under `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>`, outside WindowsApps. Opening a terminal does not prove API/network access. Never publish authorization records, credentials, logs, application data, generated packages or signing keys. See [update safety and cleanup](references/local-post-update-safety.md).
 
@@ -71,7 +73,9 @@ When application data on another AppX volume carries EFS encryption, ordinary fi
 
 ## Validation
 
-The 26.917 overlay integrates CUA readiness recognition, older patch migration and proxy environment propagation. A real local installation of 26.917.8451.0 completed on 2026-09-24 after the encrypted-file backup fix: application-data backup and restore hashes, Developer package installation, stable restart and build cleanup passed. The installed ASAR matched the validated patched artifact; plugin/runtime checks and window enumeration passed. Actual Chrome page interaction remains unverified, and this result does not establish compatibility on every machine or future version. Automation fixtures still use disposable files and mocked deployment commands; they do not uninstall the current app.
+On 2026-09-25, a process-scoped proxy launch on 26.917.9434.0 passed real Chrome session creation, tab reading, public-page navigation, link clicking and back navigation. An Electron proxy setting alone does not establish that the native Chrome-control helper inherits a proxy: the current patch forwards proxy environment variables already present in Desktop. This does not establish a cookie-import fix.
+
+The 26.917 overlay integrates CUA readiness recognition, older patch migration and proxy environment propagation. A real local installation of 26.917.8451.0 completed on 2026-09-24 after the encrypted-file backup fix: application-data backup and restore hashes, Developer package installation, stable restart and build cleanup passed. The installed ASAR matched the validated patched artifact; plugin/runtime checks and window enumeration passed. Chrome page interaction was not verified in that earlier installation, and these results do not establish compatibility on every machine or future version. Automation fixtures still use disposable files and mocked deployment commands; they do not uninstall the current app.
 
 ```powershell
 pwsh.exe -NoProfile -File .\automation\tests\test-update-safety.ps1

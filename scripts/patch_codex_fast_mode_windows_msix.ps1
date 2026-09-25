@@ -2814,6 +2814,8 @@ function Invoke-PatchAppAsar {
       $targets.DesktopFeatureMain
     )
     Write-Log "browser-use gate patch result: $browserUse"
+    $browserImportDiagnostics = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-browser-import-diagnostics.cjs') @($targets.DesktopFeatureMain)
+    Write-Log "browser import diagnostics patch result: $browserImportDiagnostics"
 
     $computerUseArgs = @(
       [string]$targets.ComputerUseAvailability
@@ -2859,6 +2861,7 @@ function Invoke-PatchAppAsar {
       return $false
     }
     if ($browserUse -eq 'already-patched' -and
+        $browserImportDiagnostics -in @('already-patched', 'not-applicable') -and
         $computerUse -eq 'already-patched' -and
         $computerUseSurface -eq 'already-patched' -and
         $nodeReplTrustedPaths -eq 'already-patched' -and
@@ -2940,6 +2943,12 @@ function Invoke-PatchAppAsar {
   Write-Log "goal patch result: $goal"
   $browserUse = Invoke-NodePatcher $nodePath $patchers.BrowserUse @($targets.BrowserUseFeatureHook, $targets.BrowserSidebarAvailability, $targets.DesktopFeatureSender, $targets.DesktopFeatureMain)
   Write-Log "browser-use gate patch result: $browserUse"
+  $browserImportDiagnostics = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-browser-import-diagnostics.cjs') @($targets.DesktopFeatureMain)
+  Write-Log "browser import diagnostics patch result: $browserImportDiagnostics"
+  & $nodePath --check $targets.DesktopFeatureMain
+  if ($LASTEXITCODE -ne 0) {
+    Fail "Browser import diagnostics target failed node --check: $($targets.DesktopFeatureMain)"
+  }
   $computerUseArgs = @(
     [string]$targets.ComputerUseAvailability
     $(if ([string]::IsNullOrWhiteSpace($targets.ComputerUseInstallFlow)) { '__none__' } else { [string]$targets.ComputerUseInstallFlow })
@@ -2974,6 +2983,7 @@ function Invoke-PatchAppAsar {
       $plugins -eq 'already-patched' -and
       $goal -eq 'already-patched' -and
       $browserUse -eq 'already-patched' -and
+      $browserImportDiagnostics -in @('already-patched', 'not-applicable') -and
       $computerUse -eq 'already-patched' -and
       $nodeReplTrustedPaths -eq 'already-patched' -and
       $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
