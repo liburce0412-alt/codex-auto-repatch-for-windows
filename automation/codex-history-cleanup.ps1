@@ -79,7 +79,10 @@ function Remove-HistoryCleanupTarget {
   foreach ($file in $actual) {
     if (-not $expected.ContainsKey($file.path) -or $expected[$file.path].sha256 -ne $file.sha256 -or $expected[$file.path].length -ne $file.length) { throw 'history file changed' }
   }
-  foreach ($file in $actual) {
+  # Keep version-identifying artifacts until last so an interrupted old-backup
+  # cleanup remains recognizable and eligible on the next successful update.
+  $removalOrder = @($actual | Sort-Object { [int]([IO.Path]::GetFileName($_.path) -match '^OpenAI\.Codex_\d+\.\d+\.\d+\.\d+_patched\.msix$') })
+  foreach ($file in $removalOrder) {
     [void](Assert-HistoryCleanupPath $file.path $Target.root)
     if ((Get-FileHash -LiteralPath $file.path -ErrorAction Stop).Hash -ne $file.sha256) { throw 'history file changed during cleanup' }
     Remove-Item -LiteralPath $file.path -ErrorAction Stop
