@@ -349,3 +349,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\test-com
 ```
 
 The regression validates the exact original and candidate hashes, unknown-hash rejection, and the platform guard using a temporary helper copy. On Windows 11 it must reject installation and leave that copy unchanged; it does not perform or claim Windows 10 capture acceptance. It also asserts that the pending end-to-end validation field remains empty.
+
+### `@oai/sky 0.7.1` / Desktop 26.917 validation
+
+Desktop `26.917.6896.0` re-signs the `0.7.1` helper without changing its code. The new profile is selected by the complete `SkyVersion` and hash pair:
+
+- Original SHA-256: `B49B868226C9EB6AB0C1A00903F7B3C7188F5ECC8C59A23488F83DC6DDF1EBC4`.
+- Patched SHA-256: `53B9DC200AFA8A1227A93F43BB5BB52EA69734BCE831339A33531762FF0AD785`.
+- Compared with the existing `D09A2F3F` profile, all ten section headers and every raw section body are byte-identical; only two checksum bytes and 4,226 certificate-overlay bytes differ. All five guarded regions match before applying the existing 132-byte MTA wrapper; the result changes 134 bytes and preserves file size.
+- Windows 10 build 19045 reproduced `SetIsBorderRequired / 0x80004002` through the official `@oai/sky` runtime before repair. After repair, a cold Explorer screenshot returned `1125x719` pixels with matching accessibility text. A later independent call refreshed Explorer with `F5` and captured it successfully.
+- Twenty unchanged Explorer captures succeeded in 31-403 ms and produced one identical image hash. An indexed click selected Task Manager's Performance tab; four spaced captures returned four different `666x593` frames whose CPU charts were visually inspected.
+- The main helper changed from 53 threads / 823 handles to 54 / 831 after the capture batch; its cursor child remained at 1 / 182. This bounded sample does not establish long-duration resource stability.
+- The isolated profile harness passed installation, idempotent installation, rollback, idempotent rollback, output/backup hash checks and rejection of an unknown input hash. Run it with `-SkyVersion 0.7.1-B49B8682`.
+
+### `@oai/sky 0.7.1` helper `D09A2F3F` / Desktop 26.915.4065.0
+
+Windows 10 build `19045` reproduces `SetIsBorderRequired failed` and `0x80004002` with the complete original SHA-256 `D09A2F3F4C144BE9C180509F5CD67D60F4B0B6FBB62E0F5A1EE131F4B653C512`. The guarded patch produces `F406A337F4EA6D794DB2E804DFBE880CE06BF8FBAEC565212411474D02E9545D`.
+
+This is a new code layout. The five raw offsets are `0x3D82D`, `0x41451`, `0x41462`, `0x126778`, and `0x12C4C8`. The 132-byte MTA wrapper fits the available executable padding without overwriting the PE runtime trailer. The callback vtable points at the new wrapper. Earlier 169-byte wrappers must not be copied to this build.
+
+Acceptance on Desktop `26.915.4065.0` used the official sky runtime and the exact helper above. Twenty Explorer captures succeeded, with 517 ms for the cold frame and 32-52 ms for subsequent frames. The resource samples stayed stable after initialization. A separate six-frame Task Manager Performance batch returned six distinct complete images; the live runtime then returned four further Performance frames over six seconds, with visible CPU graph changes. Each of those four decoded images was inspected together with the captured accessibility state. No `SetIsBorderRequired` or `0x80004002` error occurred. The helper embedded in the signed MSIX and the extracted runtime have the same complete patched hash.
+
+The regression exercises original detection, candidate hash, install, idempotence, rollback, and unknown-hash rejection using an isolated copy. This native helper acceptance does not assert that a browser tab or the separate Swift control service was exercised.
+
+After reproducing the Windows 10 `SetIsBorderRequired / 0x80004002` failure, pass `-PatchWindows10ScreenshotHelper` to the full MSIX patcher or wrapper to patch the staged helper before packaging. Without that explicit switch, the staged helper is left unchanged, including unknown hashes. An explicit request retains the full input/output hash guards and rejects unknown helpers. Targeted Model Experience, marketplace, and CUA-surface repairs reject this separate binary operation.

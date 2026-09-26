@@ -27,12 +27,15 @@ param(
   [switch]$Launch,
   [switch]$CleanupWindowsSdkAfterInstall,
   [switch]$VerifyFastModeRequest,
+  [switch]$PatchWindows10ScreenshotHelper,
+  [string[]]$CustomModels,
   [string]$OutputRoot
 )
 
 $record = [ordered]@{
   keys = @($PSBoundParameters.Keys | Sort-Object)
   outputRoot = $OutputRoot
+  customModels = @($CustomModels)
 }
 $json = ($record | ConvertTo-Json -Depth 5) + "`n"
 [System.IO.File]::WriteAllText(
@@ -48,7 +51,7 @@ $json = ($record | ConvertTo-Json -Depth 5) + "`n"
 )
 
 function Invoke-DryRunFixture {
-  param([switch]$KeepBuild)
+  param([switch]$KeepBuild, [switch]$PatchWindows10ScreenshotHelper, [string]$CustomModels)
 
   if (Test-Path -LiteralPath $capturePath -PathType Leaf) {
     [System.IO.File]::Delete($capturePath)
@@ -73,6 +76,10 @@ function Invoke-DryRunFixture {
     if ($KeepBuild) {
       $arguments += '-KeepBuild'
     }
+    if ($PatchWindows10ScreenshotHelper) {
+      $arguments += '-PatchWindows10ScreenshotHelper'
+    }
+    if ($CustomModels) { $arguments += @('-CustomModels', $CustomModels) }
     $output = @(& powershell @arguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
       throw "wrapper DryRun fixture failed: $($output -join [Environment]::NewLine)"
@@ -113,7 +120,7 @@ function Assert-KeySet {
 $defaultCapture = Invoke-DryRunFixture
 Assert-KeySet $defaultCapture `
   -Required @('DryRun', 'ForceRebuild', 'CleanupAfter', 'OutputRoot') `
-  -Forbidden @('InstallPrerequisites', 'Install', 'Launch', 'CleanupWindowsSdkAfterInstall', 'VerifyFastModeRequest')
+  -Forbidden @('InstallPrerequisites', 'Install', 'Launch', 'CleanupWindowsSdkAfterInstall', 'VerifyFastModeRequest', 'PatchWindows10ScreenshotHelper')
 
 $keepCapture = Invoke-DryRunFixture -KeepBuild
 Assert-KeySet $keepCapture `
@@ -121,3 +128,16 @@ Assert-KeySet $keepCapture `
   -Forbidden @('CleanupAfter', 'InstallPrerequisites', 'Install', 'Launch', 'CleanupWindowsSdkAfterInstall', 'VerifyFastModeRequest')
 
 Write-Output "Repatch DryRun cleanup argument forwarding regression passed: $fixtureRoot"
+
+$helperCapture = Invoke-DryRunFixture -PatchWindows10ScreenshotHelper
+Assert-KeySet $helperCapture `
+  -Required @('DryRun', 'ForceRebuild', 'CleanupAfter', 'OutputRoot', 'PatchWindows10ScreenshotHelper') `
+  -Forbidden @('InstallPrerequisites', 'Install', 'Launch')
+Write-Output 'Explicit Windows 10 helper argument forwarding passed'
+
+$modelsCapture = Invoke-DryRunFixture -CustomModels 'gpt-6-astra,gpt-6-sol'
+Assert-KeySet $modelsCapture -Required @('CustomModels') -Forbidden @('Install','Launch')
+if (@($modelsCapture.customModels).Count -ne 1 -or $modelsCapture.customModels[0] -cne 'gpt-6-astra,gpt-6-sol') {
+  throw 'wrapper lost the explicitly supplied model list'
+}
+Write-Output 'Custom model argument forwarding passed'

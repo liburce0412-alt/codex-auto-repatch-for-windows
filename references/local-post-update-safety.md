@@ -4,6 +4,21 @@ This machine's external executor lives under `%USERPROFILE%\.codex\automation`.
 The standing task invokes the exact-version watcher; the application being
 repaired must not host its own installer.
 
+## Source-version handoff and upstream direct installers
+
+The automatic watcher requires the authorized source version and package identity.
+Its producer passes `-PreserveSourceVersion -OnlyBrowserComputerUse -ForceRebuild`
+for preparation only; `-PreserveSourceVersion -Install` is rejected before work.
+The post-update repair entrypoint requires `-PrepareExternalInstall` for a full
+repatch. It cannot silently enter the generic revision-incrementing installer.
+Every newly signed artifact passes MSIX block-map payload verification before
+publication, followed by the watcher's existing identity/signature/hash checks.
+
+The generic manual patcher uses upstream's guarded revision-incrementing in-place
+update instead. Neither path is a fallback for the other's failed validation.
+This distinction preserves the existing authorized exact-version replacement,
+optional original Store media, mandatory data snapshot and CLI fallback below.
+
 ## Progress
 
 `show-codex-update-progress.ps1` opens a separate PowerShell terminal after the

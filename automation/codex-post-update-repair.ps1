@@ -1188,12 +1188,20 @@ function Invoke-Main {
   }
 
   if ($needsFullRepatch) {
+    # This workflow validates the source version and identity throughout the
+    # handoff. Revisioned direct installers use a different deployment contract.
+    if (-not $PrepareExternalInstall) {
+      throw 'Full automatic repatch requires the exact-artifact external watcher; direct installation is not supported here'
+    }
     $patchCommand = Get-Command -Name $PatchScript -ErrorAction Stop
     if (-not $patchCommand.Parameters.ContainsKey('OnlyBrowserComputerUse')) {
       throw 'MSIX patch script does not expose the required OnlyBrowserComputerUse scope; refusing a broader repatch'
     }
     if (-not $patchCommand.Parameters.ContainsKey('IncludeCustomModelVisibility')) {
       throw 'MSIX patch script does not expose the required IncludeCustomModelVisibility scope; refusing a broader Model Experience repatch'
+    }
+    if ($PrepareExternalInstall -and -not $patchCommand.Parameters.ContainsKey('PreserveSourceVersion')) {
+      throw 'MSIX patch script cannot preserve the authorized exact-artifact version'
     }
     $dryRunArguments = @(
       '-OnlyBrowserComputerUse',
@@ -1203,7 +1211,7 @@ function Invoke-Main {
       '-AppPath', $sourceCandidate.AppPath,
       '-OutputRoot', $OutputRoot
     )
-    if ($PrepareExternalInstall) { $dryRunArguments += '-KeepWorkDir' }
+    if ($PrepareExternalInstall) { $dryRunArguments += @('-KeepWorkDir', '-PreserveSourceVersion') }
     else { $dryRunArguments += '-CleanupAfter' }
     $dryRunResult = Invoke-PwshScript -Label 'msix-dry-run' -ScriptPath $PatchScript -Arguments $dryRunArguments
     if ($dryRunResult.ExitCode -ne 0) {
@@ -1238,7 +1246,7 @@ function Invoke-Main {
     } else {
       # The external watcher cleans the manifest-verified run only after a
       # successful stable restart. Shared SDK caches are outside that scope.
-      $packageArguments += '-KeepWorkDir'
+      $packageArguments += @('-KeepWorkDir', '-PreserveSourceVersion')
     }
     $packageArguments += @('-OutputRoot', $OutputRoot)
     $packageResult = Invoke-PwshScript -Label $(if ($PrepareExternalInstall) { 'msix-package' } else { 'msix-install' }) -ScriptPath $PatchScript -Arguments $packageArguments

@@ -62,7 +62,7 @@ $patcherPath = Join-Path $fixtureRoot 'PatchCustomModels.cjs'
   [System.Text.UTF8Encoding]::new($false)
 )
 
-$models = @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')
+$models = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')
 $positiveFixtures = @(
   [pscustomobject]@{
     Name = 'legacy-conditional'
@@ -94,7 +94,8 @@ function Invoke-NodePatcherFixture {
   param(
     [string]$Name,
     [string]$Source,
-    [int]$ExpectedExitCode
+    [int]$ExpectedExitCode,
+    [string[]]$ModelArguments = $models
   )
 
   $assetPath = Join-Path $fixtureRoot ($Name + '.js')
@@ -103,7 +104,7 @@ function Invoke-NodePatcherFixture {
     $Source,
     [System.Text.UTF8Encoding]::new($false)
   )
-  $arguments = @($patcherPath, $assetPath) + $models
+  $arguments = @($patcherPath, $assetPath) + $ModelArguments
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
@@ -175,6 +176,34 @@ try {
   if (-not (Test-CustomModelVisibilityExpression -Text '/*CODEX_CUSTOM_MODELS_V1*/')) {
     throw 'the PowerShell target matcher did not recognize an already-patched asset'
   }
+
+  $behaviorPath = Join-Path $fixtureRoot 'model-behavior.cjs'
+  [IO.File]::WriteAllText($behaviorPath, @'
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const c = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), c);
+for (const id of ['gpt-6-astra', 'gpt-6-sol']) {
+  assert.equal(c.visible(true, new Set(), {model:id, hidden:true}), true, id);
+}
+assert.equal(c.visible(true, new Set(), {model:'unrelated', hidden:true}), false);
+assert.equal(c.visible(true, new Set(), {model:'gpt-6-astra,gpt-6-sol', hidden:true}), false);
+'@, [Text.UTF8Encoding]::new($false))
+  $csv = Invoke-NodePatcherFixture -Name 'csv-model-arguments' -Source $positiveFixtures[0].Source -ExpectedExitCode 0 -ModelArguments @(' gpt-6-astra, gpt-6-sol ', 'gpt-6-sol')
+  & $node.Source $behaviorPath $csv.AssetPath
+  if ($LASTEXITCODE -ne 0) { throw 'CSV model IDs were not admitted independently' }
+  $updated = Invoke-NodePatcherFixture -Name 'update-existing-models' -Source ([IO.File]::ReadAllText($csv.AssetPath)) -ExpectedExitCode 0 -ModelArguments $models
+  if ($updated.Output -cne 'patched') { throw 'existing forced model list was not updated' }
+  & $node.Source $behaviorPath $updated.AssetPath
+  if ($LASTEXITCODE -ne 0) { throw 'updated forced model list changed filtering behavior' }
+  $brokenCsv = [IO.File]::ReadAllText($csv.AssetPath).Replace('["gpt-6-astra","gpt-6-sol"]', '["gpt-6-astra,gpt-6-sol"]')
+  $repaired = Invoke-NodePatcherFixture -Name 'repair-old-csv-list' -Source $brokenCsv -ExpectedExitCode 0 -ModelArguments @('gpt-6-astra,gpt-6-sol')
+  & $node.Source $behaviorPath $repaired.AssetPath
+  if ($LASTEXITCODE -ne 0) { throw 'old literal CSV model ID was not repaired' }
+  foreach ($source in @('/*CODEX_CUSTOM_MODELS_V1*/', ([IO.File]::ReadAllText($csv.AssetPath) + '/*CODEX_CUSTOM_MODELS_V1*/'))) {
+    $rejected = Invoke-NodePatcherFixture -Name ('ambiguous-' + [guid]::NewGuid().ToString('N')) -Source $source -ExpectedExitCode 2
+    if ([IO.File]::ReadAllText($rejected.AssetPath) -cne $source) { throw 'ambiguous existing model patch was changed' }
+  }
+  Write-Output 'CUSTOM_MODEL_CSV_UPDATE_AND_BEHAVIOR_PASSED'
 } finally {
   if ($hasNativePreference) {
     $PSNativeCommandUseErrorActionPreference = $previousNativePreference

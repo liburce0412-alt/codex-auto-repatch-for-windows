@@ -18,6 +18,12 @@ The automatic scope is Chrome/Browser, Windows Computer Use and custom-model vis
 
 The next default-scope or full repack also adds browser profile import exception logging. Look for `Browser profile import exception` after a failure; exceptions use the existing sensitive logging channel without additional request or result logging. This aids diagnosis and is not a confirmed cookie-import fix. Updating the scripts alone does not start an installation or restart Desktop.
 
+## Compatibility update
+
+The reviewed upstream main and pending PRs provide payload verification, Chrome verification compatibility and modern Computer Use matching. This fork also fixes browser sidebar discovery in the new shared bundle. The [integration record](references/upstream-20260926-integration.md) lists exact sources and validation limits. The default-scope dry run passed against the actual staged `26.924.1866.0` package; installation and new-version UI acceptance have not been performed.
+
+Automatic repair retains its source-version artifact handoff, data backup, CLI fallback and successful-restart history cleanup. Generic manual direct installers instead use upstream's revision-incrementing in-place update. Do not mix these contracts. Updating the skill does not click Desktop's update button.
+
 ## Install
 
 Requirements: Windows x64, Codex Desktop installed for the current user, Git, and an independently installed PowerShell 7.5 or later. The patch tools check build prerequisites; the first build may download Windows SDK tools. Allow disk space for extracted packages and application-data backups.

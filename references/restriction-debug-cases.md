@@ -535,7 +535,9 @@ It starts the plugin's own cua_repl server over stdio with `CUA_REPL_ENABLED_SUR
 Run `test-cua-surface-lock-patterns.ps1` and `python scripts/test-probe-cua-surface.py` for offline regression coverage. Descriptor-only plugin layouts without the required launcher/resources are unsupported and must remain untouched; do not treat that rejection as permission to install optional plugins or repack Desktop.
 - This repair is scoped to the builds it was verified on and to the anchors it records; re-run `-VerifyOnly` after a Desktop update rather than assuming it still applies. The re-application case below covers what to do with each possible report.
 
-## Windows Native App Bindings Are macOS-Only, So The Injected Description Misleads The Model
+## Legacy Windows Native App Bindings Were macOS-Only
+
+Version boundary: this case records the older `@oai/cua` runtime that threw `Native app bindings are unavailable for windows.` on `cua.getApp` and `cua.listApps`. The `@oai/cua 0.2.5` bundled with Desktop `26.917.9434.0` has a Windows branch in `tinysky_alt/create_tinysky_alt.js`. Its documentation and source support `cua.listWindows()`, `cua.listApps()`, and `cua.getApp({ windowId: <real window ID> })`. The string form of `getApp` remains the macOS form. Check the installed runtime before applying this legacy description repair; the current descriptor-only plugin has no `scripts/launch.mjs` target for it. Source inspection establishes API shape, while a fresh Desktop window capture after restoring the ASAR surface gate is still required for runtime acceptance.
 
 Symptoms:
 
@@ -611,6 +613,8 @@ When `-VerifyOnly` reports `unsupported` for a profile, the shipped file changed
 The cache-level repair is preferred over patching Desktop's bundle for the reasons given in the surface lock case; it is the version-agnostic path, and it is the one that a re-run of `-VerifyOnly` keeps honest.
 
 ## Third-Party Config Rewriter Removes Computer Use Features And Plugin Sections
+
+Version boundary: the feature-key loss below records the 2026-09-06 case. On CLI `0.155.0-alpha.16.4`, `codex features list` reports `computer_use` as `stable true`, `js_repl` as `removed false`, and `non_prefixed_mcp_tool_names` as `under development false`. A fresh Desktop `26.917.9434.0` session completed Windows window binding, screenshot, and keyboard input with no explicit `computer_use` key and `js_repl = false`. Restore a missing `unified-computer-use` plugin table when `cua_repl` disappears, but do not restore historical feature keys solely because a config rewriter omitted them.
 
 Symptoms:
 
@@ -744,6 +748,36 @@ Action:
 - Restart Codex Desktop so the app-server reloads `model_catalog_json`, then re-run the `model/list` probe and require both tiers in the response before reporting success.
 - Do not touch unrelated catalogs: a `cc-switch-model-catalog.json` holding other providers (for example grok) is out of scope, and a stale `models_cache.json` can still be referenced by the installed CLI binary even when its mtime is old, so verify references before deleting anything.
 
+## Chrome Custom-Provider Request-Header Authentication Dependency
+
+On plugin `26.917.71314` / CLI `0.155.0-alpha.16.4`, Chrome discovery and sidebar model chat can work while automation session/tab commands fail with `Codex auth token is unavailable`. They are different paths. The browser service's `sendSessionRequest` waits on the official identity-backed `codex_browser_use_agent_request_header` policy before sending an extension command. The in-app backend and `getInfo` do not take that same branch. A custom provider may legitimately set `requires_openai_auth=false`; do not infer that sidebar chat needs a ChatGPT login from this automation failure.
+
+`scripts/patch-chrome-custom-provider-headers.cjs` selects profiles by the complete original or reversibly reconstructed original SHA-256, never a version prefix. It checks output syntax, requires exact original backups before replacement, rejects unknown/partial/mixed files, and refuses WindowsApps writes.
+
+| Service profile | Original SHA-256 | Patched SHA-256 | Acceptance |
+| --- | --- | --- | --- |
+| `26.917.71314` | `2f5dbc3004622917776e033cc179d94fe778ca9ffc7b7375738471947474bcff` | `8886deea23c8ececd5156c2ee4300431307bda9b5e8910f8d82b5241cf4f38da` | Offline regressions and real Windows Chrome acceptance |
+| `26.908.40834` | `3b173421bc39677842ac1005be84c9c60c15e4c574598fc5b1324eac05b03ecd` | `fc4a2f947c3d950f8cbebe4066e12f98018f8890b5a7ad9cc3ad8bb4676622e3` | Offline regressions only |
+| `26.908.70816` | `dc969a0d9062bb21ea124c672dd05fdc1034cfe314cf31357a192474426903b3` | `b2b181286f2e9b4429678cea71d2954f891a4b21db7430c7740a134f47d3286d` | Offline regressions only |
+
+The overlay catches only the exact missing-token error from the request-header policy. It then reads current config through the existing runtime API and permits only a non-`openai` provider whose own `requires_openai_auth` is explicitly boolean false, a Chrome extension client, and a supported boolean request-header capability. Its fallback is `agent_request_header_enabled=true`, never false. Normal policy results, other errors, Edge, the in-app backend, unsupported capabilities, missing configuration, and unreadable configuration keep their original behavior. The remaining origin, network, history, download, and other permission code is unchanged.
+
+`install-computer-use-local.ps1` first probes each installed package's unmodified browser/chrome service. An unsupported official source explicitly skips only this overlay, so a future plugin version does not block unrelated base repairs; the log must not be reported as a successful Chrome auth repair. For a supported source, every existing marketplace, current-version cache, stable-cache, and mutable-mirror copy must match that source or its exact complete patch. A corrupt or mixed-version cache fails before any overlay write, even if its bytes match another supported profile. The patcher's read-only `--probe-source` reports unknown unmarked sources as `unsupported`; ordinary inspect/apply still rejects them, and partial patched sources always fail.
+
+The overlay does not install optional plugins or edit config. `-StrictVerifyOnly` verifies without writing. After confirming the matching failure/profile, use the normal `-VerifyOnly` local repair path to refresh caches and reapply the overlay after plugin registration. Reset the current JavaScript kernel, rerun strict verification, and validate real Chrome operations. Keep `browser-client.mjs` byte-identical to the package. Do not disable ambient networking or security modes as a substitute; the ambient-network switch alone still fails the identity precondition.
+
+Tests: run `node scripts/test-chrome-custom-provider-headers.cjs <original-service> <temporary-root>` for each profile. The suite covers exact hashes, partial/mixed patches, request-header policy guards, browser behavior, backup, protected-package refusal, and idempotence. `test-chrome-header-cache-scope.ps1 -OriginalService <original-service> -OtherSupportedService <different-profile-original> -TemporaryRoot <directory>` covers scope, unsupported official sources, mixed-profile rejection, whole-batch preflight, backup, read-only verification, and idempotence in isolated fixtures. Do not substitute the live-mutating `test-bundled-plugin-scope.ps1` during a no-restart publication check.
+
+Real no-login acceptance on Windows with Desktop `26.917.9434.1` and service `26.917.71314` verified session naming, tab listing, Example Domain navigation, a local form input/click, and the actual `x-browser-agent` HTTP header at the controlled local server. Only a tool-kernel reset was needed; Desktop/provider/phone auth were not changed. The two `26.908` profiles passed the same offline guard/behavior tests against their exact source files; the original issue's Desktop `26.908.9136.0` was not reinstalled or live-tested. Do not present that offline coverage as old-Desktop end-to-end proof or claim unknown future builds are supported.
+
+## Replacement Installation Removes Codex Then Fails With 0x80073D28
+
+The package can have a valid signature and fully validated ASAR while still requiring administrator privileges for `windows.service`, `packagedServices`, or `localSystemServices`. On `26.917.9434.0`, a non-elevated external installer removed the Store package, then `Add-AppxPackage` rejected registration of its LocalSystem sandbox service with `0x80073D28`. The old uninstall-first function had no rollback. Do not attribute this to a model patch or treat an artifact check as a deployment preflight.
+
+Use `lib/msix-safe-install.ps1`: build a higher package revision, validate deployment prerequisites first, and call `Add-AppxPackage -ForceApplicationShutdown` without `Remove-AppxPackage`. A failed deployment must not trigger a remove-and-retry fallback. Verify normal Windows UAC elevation in an independent executor before service-bearing deployment. A child `Start-Process` can die with Desktop; verify ancestry rather than assuming that a hidden window is independent.
+
+Keep original program bytes in a signed higher-revision recovery MSIX until actual launch and runtime acceptance pass. The normal three patcher entrypoints perform guarded in-place deployment but do not automatically build a recovery MSIX or run a startup-recovery transaction. An external executor may call `Invoke-RecoverableMsixInstall` with a separately prepared recovery package and a real `ValidateInstalledPackage` callback. If startup validation fails after a successful update, that helper deploys the prepared recovery package once, in place. Keep logs for both update and recovery; never claim success from `Add-AppxPackage` or signing alone. `scripts/test-msix-safe-install.ps1` covers the no-uninstall contract, manifest/version preservation, non-admin rejection, identity/signature gates, same/other-version Desktop ancestry, deployment failure, and simulated startup recovery. These fixture tests are not live installation proof.
+
 ## Patched Package Installs But Codex Desktop Never Starts
 
 Symptoms:
@@ -781,3 +815,27 @@ On Desktop `26.915.4065.0`, a real unified CUA session can enumerate native wind
 The verifier accepts only the complete absence of the legacy `skills\computer-use` directory when the CLI reports exactly one installed, enabled unified Computer Use plugin, its versioned descriptor matches, and its generated MCP manifest enables `js` and the `computer` surface with the current runtime launcher and trusted sky service. A partial skill directory, modified file, missing documentation outside that directory, disabled plugin, stale runtime path, or missing launcher still fails. The native runtime import and browser trust checks still run. Verification never recreates the retired directory.
 
 Run `scripts/test-managed-computer-use-skill.ps1 -TemporaryRoot <temporary-root>` and strict verification after a Desktop session has reconciled the plugins. Validate screenshots and browser tabs through the real Desktop `cua_repl` session separately; a passing cache check alone does not prove those operations.
+
+## Desktop 26.917 Removes The Separate Computer Use Node REPL Flag
+
+The full or surface-only dry run can report `expected exactly one Windows CUA surface-gating target; found 0` even though both Darwin-only gates remain. In Desktop `26.917.6896.0`, `computerUseNodeRepl` is absent from the bundle. Requiring that property during target discovery hides the valid target; adding it back in the Windows expression leaves the computer surface permanently false.
+
+Accept the separate modern layout only when the complete shared readiness predicate is present once. It requires `browserUseTinysky`, a non-WSL runtime, both Node executable paths, `mcpToolExposure`, and an installed, enabled, available unified CUA plugin. The minified capability helper can be renamed: Desktop `26.917.6896.0` uses `n.Gu`, while `26.917.8451.0` and `26.917.9434.0` use `n.Wu`. Match the import/export identifiers structurally in both the finder and embedded patcher without dropping any condition. Preserve that readiness value plus `computerUse` on Windows; preserve the service-app checks on Darwin. Older layouts still require their existing `computerUseNodeRepl` property. Complete previous patches with a missing or stale flag are migrated after verifying the host layout independently of the inserted patch expression. Do not remove readiness checks or rewrite generated `.mcp.json` to compensate.
+
+The surface fixture suite covers 304 modern platform/readiness combinations for the original and renamed helpers, plus the existing 120 legacy combinations, migration, idempotency, corrupt or duplicate readiness anchors, target selection, and unchanged refusal of partial or ambiguous patches. The original contributor validated a full dry-run, signing, installation, real native screenshots, and browser reads on `26.917.6896.0`. The subsequent `n.Wu` compatibility correction was checked against the actual `26.917.9434.0` bundle with syntax and repeat-run validation; this is separate from Desktop installation or screenshot acceptance.
+
+## CUA Requests Time Out After Proxy Variables Are Removed
+
+On Desktop `26.915.4065.0`, native app enumeration can work and Chrome can connect while tab creation or listing fails with `nodeRepl.fetch request failed`. Compare the actual `cua_repl` child process environment with its app-server parent. Checking `codex-computer-use-swift.exe` alone does not test the process that performs the request.
+
+The Node REPL config builder replaces `env_vars` during Desktop reconciliation. A manual edit to the materialized plugin manifest or `config.toml` can therefore disappear on restart. The repair adds the existing standard HTTP/HTTPS/ALL/NO proxy variable names to the Windows native builder, preserving existing entries and deduplicating them. Unset variables, credentials under other names, macOS, Linux, and WSL paths are left unchanged. Proxy values are inherited at launch and are never embedded in the bundle.
+
+Run `scripts/test-node-repl-proxy-env.cjs`, then a full dry run. After installing the updated MSIX from an external executor, verify the real CUA child environment and a controlled browser tab. Restarting only its JavaScript kernel does not restart the MCP process.
+
+## Windows CUA Entry Instructions Use an Unsupported App Name
+
+The current runtime can ship `instructions/windows/computer.md` with the macOS-style `cua.getApp("Example App")` example. Windows requires `cua.listWindows()` followed by `cua.getApp({ windowId })`. `scripts/lib/windows-cua-runtime.ps1` corrects only that exact old text, preserves already-correct instructions, and refuses an unknown shape. The local repair saves the original instructions under the Codex backup directory; full MSIX repair also updates the staged copy. A screenshot acceptance must raise the selected window and compare the visible content with its accessibility tree.
+
+## Signing Certificate Provider Is Missing
+
+A clean Windows PowerShell host can lack the `Cert:` provider even though an existing signing certificate is present. The patcher enumerates `CurrentUser/My` through `X509Store` before invoking certificate creation. It still requires matching subject, a private key, valid expiry, and the code-signing usage. A successful package build must pass signature verification and package inspection before installation.

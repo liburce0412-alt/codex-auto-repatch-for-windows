@@ -3,6 +3,7 @@ param(
   [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\codex-msix-repack'),
   [switch]$InstallPrerequisites,
   [switch]$Install,
+  [switch]$PreserveSourceVersion,
   [switch]$Launch,
   [switch]$NoLaunch,
   [switch]$ForceRebuild,
@@ -12,10 +13,11 @@ param(
   [switch]$AddLocalPluginMarketplace,
   [string]$LocalPluginMarketplaceSource = (Join-Path $env:USERPROFILE '.codex\.tmp\plugins'),
   [string]$LocalPluginMarketplaceName = 'openai-curated-local',
-  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
+  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
   [switch]$VerifyFastModeRequest,
   [switch]$OnlyBundledMarketplaceCopy,
   [switch]$OnlyComputerUseSurface,
+  [switch]$PatchWindows10ScreenshotHelper,
   [Alias('OnlyCustomModels')]
   [switch]$OnlyModelExperience,
   [switch]$OnlyBrowserComputerUse,
@@ -24,6 +26,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
+. (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 $LogPrefix = '[codex-msix-patch-win]'
 $OutputRootWasExplicit = $PSBoundParameters.ContainsKey('OutputRoot')
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
@@ -42,8 +46,8 @@ function Fail {
   throw "$LogPrefix error: $Message"
 }
 
-if ($Install) {
-  Fail 'direct -Install is disabled because Remove-AppxPackage and Add-AppxPackage require the authorized two-stage watcher; omit -Install to produce a signed artifact'
+if ($PreserveSourceVersion -and ($Install -or -not $OnlyBrowserComputerUse)) {
+  Fail 'PreserveSourceVersion is only for Browser/Computer Use artifact preparation by the exact-version external watcher; direct installation is forbidden'
 }
 
 if (($OnlyBrowserComputerUse -and $OnlyBundledMarketplaceCopy) -or
@@ -67,8 +71,11 @@ if ($OnlyBrowserComputerUse -and -not $ForceRebuild) {
 function Assert-ComputerUseSurfaceOptions {
   if ($OnlyComputerUseSurface -and
       ($OnlyBrowserComputerUse -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
-       $AddLocalPluginMarketplace -or $VerifyFastModeRequest)) {
+       $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or $PatchWindows10ScreenshotHelper)) {
     Fail '-OnlyComputerUseSurface cannot be combined with other targeted modes, marketplace registration, or Fast Mode verification'
+  }
+  if ($PatchWindows10ScreenshotHelper -and ($OnlyBundledMarketplaceCopy -or $OnlyModelExperience)) {
+    Fail '-PatchWindows10ScreenshotHelper requires the full repair mode'
   }
 }
 
@@ -808,7 +815,7 @@ process.stdout.write('patched');
   Set-Content -LiteralPath $customModelsPatcherPath -Encoding UTF8 -Value @'
 const fs = require('node:fs');
 const file = process.argv[2];
-const models = [...new Set(process.argv.slice(3).filter(Boolean))];
+const models = [...new Set(process.argv.slice(3).flatMap(value => value.split(',')).map(value => value.trim()).filter(Boolean))];
 if (models.length === 0) {
   process.stderr.write('custom-model-list-empty\n');
   process.exit(2);
@@ -816,8 +823,25 @@ if (models.length === 0) {
 
 const marker = 'CODEX_CUSTOM_MODELS_V1';
 const text = fs.readFileSync(file, 'utf8');
-if (text.includes(marker) && models.every((model) => text.includes(model))) {
-  process.stdout.write('already-patched');
+if (text.includes(marker)) {
+  const lists = [...text.matchAll(/\/\*CODEX_CUSTOM_MODELS_V1\*\/(\[[^\]\r\n]*\])\.includes\(([$A-Za-z_][$\w]*)\.model\)\|\|/g)];
+  if (text.split(marker).length !== 2 || lists.length !== 1) {
+    process.stderr.write('custom-model-existing-patch-ambiguous\n');
+    process.exit(2);
+  }
+  let previous;
+  try { previous = JSON.parse(lists[0][1]); } catch { previous = null; }
+  if (!Array.isArray(previous) || !previous.every(value => typeof value === 'string')) {
+    process.stderr.write('custom-model-existing-list-invalid\n');
+    process.exit(2);
+  }
+  if (JSON.stringify(previous) === JSON.stringify(models)) {
+    process.stdout.write('already-patched');
+  } else {
+    const start = lists[0].index + `/*${marker}*/`.length;
+    fs.writeFileSync(file, text.slice(0, start) + JSON.stringify(models) + text.slice(start + lists[0][1].length));
+    process.stdout.write('patched');
+  }
   process.exit(0);
 }
 
@@ -1727,12 +1751,16 @@ if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
 
 if (!after.includes(sitesPatchedMarker)) {
   const sitesAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.sites/;
-  if (!sitesAvailabilityRe.test(after)) {
+  const sitesRetirementRe = /async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{let\{plugins:([A-Za-z_$][\w$]*)\}=await \1\.getUserSavedConfiguration\(\);typeof \2==`object`&&\2&&!Array\.isArray\(\2\)&&Object\.hasOwn\(\2,`sites@openai-bundled`\)&&await \1\.uninstallPlugin\(\{pluginId:`sites@openai-bundled`\}\)\}/g;
+  const sitesRetired = [...after.matchAll(sitesRetirementRe)].length === 1 &&
+    !/\.\.\.[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.sites\b/.test(after);
+  if (sitesAvailabilityRe.test(after)) {
+    after = after.replace(sitesAvailabilityRe, `isAvailable:()=>!0/*${sitesPatchedMarker}*/`);
+    changed = true;
+  } else if (!sitesRetired) {
     process.stderr.write('bundled-marketplace-sites-availability-target-not-found\n');
     process.exit(2);
   }
-  after = after.replace(sitesAvailabilityRe, `isAvailable:()=>!0/*${sitesPatchedMarker}*/`);
-  changed = true;
 }
 
 if (!after.includes(deepResearchPatchedMarker)) {
@@ -1803,17 +1831,38 @@ const marker = 'CODEX_CUA_WINDOWS_SURFACE_V1';
 // exposing the computer-use plugin and one for generating the CUA surface list.
 // The Windows helper is supplied by the local CUA runtime, so both checks must
 // admit win32 before the plugin can expose the window-based cua.computer API.
-const originalPluginGate = 'if(!r.installed||i==null||a&&e.platform!==`darwin`)return null;';
-const patchedPluginGate = 'if(!r.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;';
-const originalSurfaceGate = 'p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null';
-// Recognize the removed flag only when the complete 26.917 readiness predicate
-// is present. Preserve that predicate and the legacy flag on older bundles.
-const modernReadiness = 'return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`';
-// Store 26.917.8451 uses Wu for the same verified version capability check.
-const modernReadiness8451 = modernReadiness.replace('n.Gu(', 'n.Wu(');
-const modernPatchedSurfaceGate = 'p=f&&t.computerUse&&(l.platform===`darwin`&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`)';
-const pr62PatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse)';
-const legacyPatchedSurfaceGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)';
+// Desktop 26.924 renamed every minified local in both gates without changing
+// their shape, so the anchors match the gate STRUCTURE with capture groups and
+// rewrite the patched forms with the bundle's own identifiers. Backreferences
+// pin repeated locals (the platform object, the feature flags object and the
+// browser-use state object) so lookalike code cannot satisfy a pattern.
+const id = '[A-Za-z_$][\\w$]*';
+const originalPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&(${id})\\.platform!==\`darwin\`\\)return null;`, 'g');
+const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&\\((${id})\\.platform!==\`darwin\`&&\\4\\.platform!==\`win32\`\\)\\)return null;`, 'g');
+const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
+const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
+const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
+const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
+// Desktop 26.917 removes computerUseNodeRepl. Its shared readiness result f
+// already requires the enabled CUA plugin, both Node paths and mcpToolExposure.
+const modernReadinessRe = /return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`/g;
+const patchedSurfaceGateRes = [modernPatchedSurfaceGateRe, legacyPatchedSurfaceGateRe, unversionedPatchedSurfaceGateRe];
+// Do not infer the host layout from a dependency inserted by a previous patch.
+const layoutText = patchedSurfaceGateRes.reduce((source, re) => source.replace(re, ''), text);
+const legacyLayout = layoutText.includes('computerUseNodeRepl');
+const modernLayout = !legacyLayout && [...layoutText.matchAll(modernReadinessRe)].length === 1;
+
+function buildPluginGate(p, i, a, e) {
+  return `if(!${p}.installed||${i}==null||${a}&&(${e}.platform!==\`darwin\`&&${e}.platform!==\`win32\`))return null;/*${marker}*/`;
+}
+
+function buildSurfaceGate(layout, result, flag, platform, features, state) {
+  const darwinTail = `${state}.enabled&&${state}.paths.serviceAppPath!=null`;
+  if (layout === 'modern') {
+    return `${result}=${flag}&&${features}.computerUse&&(${platform}.platform===\`darwin\`&&${darwinTail}||${platform}.platform===\`win32\`)`;
+  }
+  return `${result}=${flag}&&(${platform}.platform===\`darwin\`&&${features}.computerUse&&${darwinTail}||${platform}.platform===\`win32\`&&${features}.computerUse&&${features}.computerUseNodeRepl)`;
+}
 
 function count(value, source = text) {
   let total = 0;
@@ -1825,52 +1874,61 @@ function count(value, source = text) {
   return total;
 }
 
-const pluginCount = count(originalPluginGate);
-const surfaceCount = count(originalSurfaceGate);
+function countRe(re, source = text) {
+  return (source.match(re) || []).length;
+}
+
+const pluginCount = countRe(originalPluginGateRe);
+const surfaceCount = countRe(originalSurfaceGateRe);
 const markerCount = count(marker);
-const patchedPluginCount = count(patchedPluginGate);
-const modernPatchedSurfaceCount = count(modernPatchedSurfaceGate);
-const pr62PatchedSurfaceCount = count(pr62PatchedSurfaceGate);
-const legacyPatchedSurfaceCount = count(legacyPatchedSurfaceGate);
-const patchedSurfaceCount = modernPatchedSurfaceCount + pr62PatchedSurfaceCount + legacyPatchedSurfaceCount;
-let existingSurfaceGate = null;
+const patchedPluginCount = countRe(patchedPluginGateRe);
+const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
+const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
 if (markerCount || patchedPluginCount || patchedSurfaceCount) {
   if (markerCount === 1 && patchedPluginCount === 1 &&
-      patchedSurfaceCount === 1 &&
-      pluginCount === 0 && surfaceCount === 0) {
-    existingSurfaceGate = modernPatchedSurfaceCount ? modernPatchedSurfaceGate :
-      pr62PatchedSurfaceCount ? pr62PatchedSurfaceGate : legacyPatchedSurfaceGate;
-  } else {
-    process.stderr.write('incomplete or ambiguous CUA surface patch; refusing to modify the asset\n');
-    process.exit(2);
+      patchedSurfaceCount === 1 && pluginCount === 0 && surfaceCount === 0 &&
+      (legacyLayout || modernLayout)) {
+    const expectedLayout = modernLayout ? 'modern' : 'legacy';
+    const currentGateIndex = patchedSurfaceCounts.findIndex(value => value === 1);
+    const expectedGateIndex = modernLayout ? 0 : 1;
+    if (currentGateIndex === expectedGateIndex) {
+      process.stdout.write('already-patched');
+    } else {
+      // modern captures (result, flag, features, platform, state); the legacy
+      // and unversioned forms capture (result, flag, platform, features, state).
+      const next = text.replace(patchedSurfaceGateRes[currentGateIndex],
+        (match, result, flag, first, second, state) => {
+          const platform = currentGateIndex === 0 ? second : first;
+          const features = currentGateIndex === 0 ? first : second;
+          return buildSurfaceGate(expectedLayout, result, flag, platform, features, state);
+        });
+      fs.writeFileSync(file, next);
+      process.stdout.write('patched');
+    }
+    process.exit(0);
   }
+  process.stderr.write('incomplete or ambiguous CUA surface patch; refusing to modify the asset\n');
+  process.exit(2);
 }
-if (!existingSurfaceGate && (pluginCount !== 1 || surfaceCount !== 1)) {
+if (pluginCount !== 1 || surfaceCount !== 1) {
   process.stderr.write(`current CUA surface anchors not found exactly once: plugin=${pluginCount} surface=${surfaceCount}\n`);
   process.exit(2);
 }
-
-// Ignore a flag introduced only by an older patch when classifying the bundle.
-const layoutText = existingSurfaceGate ? text.replace(existingSurfaceGate, '') : text;
-const readinessCount = count(modernReadiness) + count(modernReadiness8451);
-const modernLayout = readinessCount === 1 && !layoutText.includes('computerUseNodeRepl');
-const legacyLayout = layoutText.includes('computerUseNodeRepl') && readinessCount === 0;
-if (!modernLayout && !legacyLayout) {
-  process.stderr.write('unknown or ambiguous CUA readiness layout; refusing to modify the asset\n');
+if (!legacyLayout && !modernLayout) {
+  process.stderr.write('unsupported or ambiguous CUA readiness predicate; refusing to modify the asset\n');
   process.exit(2);
 }
-const patchedSurfaceGate = modernLayout ? modernPatchedSurfaceGate : legacyPatchedSurfaceGate;
-if (existingSurfaceGate === patchedSurfaceGate) {
-  process.stdout.write('already-patched');
-  process.exit(0);
-}
-const next = existingSurfaceGate ? text.replace(existingSurfaceGate, patchedSurfaceGate) : text
-  .replace(originalPluginGate, `${patchedPluginGate}/*${marker}*/`)
-  .replace(originalSurfaceGate, patchedSurfaceGate);
 
-if (count(marker, next) !== 1 || count(patchedPluginGate, next) !== 1 ||
-    count(patchedSurfaceGate, next) !== 1 || count(originalPluginGate, next) !== 0 ||
-    count(originalSurfaceGate, next) !== 0) {
+const layout = modernLayout ? 'modern' : 'legacy';
+const expectedSurfaceGateRe = modernLayout ? modernPatchedSurfaceGateRe : legacyPatchedSurfaceGateRe;
+const next = text
+  .replace(originalPluginGateRe, (match, p, i, a, e) => buildPluginGate(p, i, a, e))
+  .replace(originalSurfaceGateRe, (match, result, flag, platform, features, state) =>
+    buildSurfaceGate(layout, result, flag, platform, features, state));
+
+if (count(marker, next) !== 1 || countRe(patchedPluginGateRe, next) !== 1 ||
+    countRe(expectedSurfaceGateRe, next) !== 1 || countRe(originalPluginGateRe, next) !== 0 ||
+    countRe(originalSurfaceGateRe, next) !== 0) {
   process.stderr.write('current CUA surface patch verification failed\n');
   process.exit(3);
 }
@@ -1988,7 +2046,7 @@ function Find-BrowserComputerUsePatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($browserSidebarAvailabilityTarget)) {
-    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-*.js' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'app-initial-*.js' -or $_.Name -like 'app-shared-*.js' } | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('in_app_browser') -and
            $text.Contains('experimental-features') -and
@@ -2272,7 +2330,7 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($browserSidebarAvailabilityTarget)) {
-    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-*.js' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'app-initial-*.js' -or $_.Name -like 'app-shared-*.js' } | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('in_app_browser') -and
            $text.Contains('experimental-features') -and
@@ -2599,12 +2657,12 @@ function Find-ComputerUseSurfaceTarget {
   }
   $candidates = @(foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File)) {
     $text = [IO.File]::ReadAllText($candidate.FullName)
-    $modernReadiness = 'return t.browserUseTinysky&&!o&&a.nodePath!=null&&a.nodeReplPath!=null&&n.Gu(e,`mcpToolExposure`)&&s?.plugin.installed===!0&&s.plugin.enabled&&s.plugin.availability===`AVAILABLE`'
+    $modernReadinessPattern = 'return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`'
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
-         ($text.Contains('computerUseNodeRepl') -or $text.Contains($modernReadiness) -or
-          $text.Contains($modernReadiness.Replace('n.Gu(', 'n.Wu('))) -and
+         ($text.Contains('computerUseNodeRepl') -or
+          [regex]::Matches($text, $modernReadinessPattern).Count -eq 1) -and
          $text.Contains('serviceAppPath!=null') -and
          $text.Contains('platform===`darwin`'))) {
       $candidate.FullName
@@ -2912,6 +2970,21 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
+  # Current runtime-backed CUA plugins need the Windows surface gate in addition
+  # to the shared Computer Use feature gate. Older bundles have no surface list.
+  $computerUseSurface = 'not-applicable'
+  $surfaceCandidates = @(Invoke-RgList $rgPath 'cuaReplSurfaces|CODEX_CUA_WINDOWS_SURFACE_V1' (Join-Path $extractDir '.vite\build'))
+  if ($surfaceCandidates.Count -gt 0) {
+    $computerUseSurfaceTarget = Find-ComputerUseSurfaceTarget $extractDir
+    Write-Log "Windows CUA surface patch target: $computerUseSurfaceTarget"
+    $computerUseSurface = Invoke-NodePatcher $nodePath $patchers.ComputerUseSurface @($computerUseSurfaceTarget)
+    & $nodePath --check $computerUseSurfaceTarget
+    if ($LASTEXITCODE -ne 0) {
+      Fail "Windows CUA surface patched asset failed node --check: $computerUseSurfaceTarget"
+    }
+  }
+  Write-Log "Windows CUA surface patch result: $computerUseSurface"
+
   $targets = Find-PatchTargets $rgPath $extractDir
 
   $fast = Invoke-NodePatcher $nodePath $patchers.Fast @($targets.FastMode)
@@ -2987,7 +3060,8 @@ function Invoke-PatchAppAsar {
       $computerUse -eq 'already-patched' -and
       $nodeReplTrustedPaths -eq 'already-patched' -and
       $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
-      $bundledMarketplaceCopy -eq 'already-patched') {
+      $bundledMarketplaceCopy -eq 'already-patched' -and
+      $computerUseSurface -in @('already-patched', 'not-applicable')) {
     Write-Log 'asar patch already present'
     return $false
   }
@@ -2999,6 +3073,7 @@ function Invoke-PatchAppAsar {
 }
 
 . (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
+. (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 
 function Get-ManifestPublisher {
   param([string]$WorkPackageRoot)
@@ -3024,15 +3099,23 @@ function Test-CodeSigningCertificate {
 
 function Get-OrCreateSigningCertificate {
   param([string]$Publisher)
-  $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.Subject -eq $Publisher -and
-      $_.HasPrivateKey -and
-      $_.NotAfter -gt (Get-Date) -and
-      (Test-CodeSigningCertificate $_)
-    } |
-    Sort-Object NotAfter -Descending |
-    Select-Object -First 1
+  # The SDK's Certificate provider can be absent in a clean Windows PowerShell
+  # session. Reading the store directly still finds an existing signing key.
+  $store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')
+  try {
+    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    $cert = $store.Certificates |
+      Where-Object {
+        $_.Subject -eq $Publisher -and
+        $_.HasPrivateKey -and
+        $_.NotAfter -gt (Get-Date) -and
+        (Test-CodeSigningCertificate $_)
+      } |
+      Sort-Object NotAfter -Descending |
+      Select-Object -First 1
+  } finally {
+    $store.Close()
+  }
   if ($cert) {
     Write-Log "using existing signing certificate: $($cert.Thumbprint)"
     return $cert
@@ -3183,34 +3266,13 @@ function Get-PreparedMsixInstallIdentity {
 function Install-PatchedPackage {
   param(
     [string]$MsixPath,
-    [string]$ExpectedSourcePackageFullName
+    [string]$PackageFamilyName
   )
-  Assert-ExternalDesktopRepairContext
-  $installIdentity = Get-PreparedMsixInstallIdentity -MsixPath $MsixPath -ExpectedSourcePackageFullName $ExpectedSourcePackageFullName
-  $existing = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($existing) {
-    if (-not [string]::Equals([string]$existing.PackageFamilyName, $installIdentity.PackageFamilyName, [StringComparison]::OrdinalIgnoreCase) -or
-        [version][string]$existing.Version -gt $installIdentity.Version -or
-        ([version][string]$existing.Version -eq $installIdentity.Version -and
-         -not [string]::Equals([string]$existing.PackageFullName, $installIdentity.PackageFullName, [StringComparison]::OrdinalIgnoreCase))) {
-      Fail "refusing to remove a package newer than or outside the prepared MSIX contract: current=$($existing.PackageFullName) prepared=$($installIdentity.PackageFullName)"
-    }
-    Stop-CodexDesktopProcesses $existing.InstallLocation
-    Write-Log "removing existing package: $($existing.PackageFullName)"
-    try {
-      Remove-AppxPackage -Package $existing.PackageFullName -PreserveApplicationData -ErrorAction Stop
-    } catch {
-      Write-Log 'PreserveApplicationData is not supported here; retrying normal Remove-AppxPackage'
-      Remove-AppxPackage -Package $existing.PackageFullName -ErrorAction Stop
-    }
-  }
-  Write-Log "installing patched MSIX: $MsixPath"
-  Add-AppxPackage -Path $MsixPath -ErrorAction Stop
-  $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
-  if (-not [string]::Equals([string]$installed.PackageFullName, $installIdentity.PackageFullName, [StringComparison]::OrdinalIgnoreCase) -or
-      [string]$installed.SignatureKind -ne 'Developer') {
-    Fail "installed package does not match the prepared Developer identity: $($installed.PackageFullName) signature=$($installed.SignatureKind)"
-  }
+  # Authenticode validates the signed block map; it does not prove the ZIP payload
+  # matches that map. Reject a damaged package before interrupting a working app.
+  $payload = Test-MsixPayload -Path $MsixPath
+  Write-Log "MSIX payload verified: files=$($payload.Files) blocks=$($payload.Blocks)"
+  $installed = Invoke-TransactionalMsixInstall -MsixPath $MsixPath -PackageName $PackageFamilyName
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
     $application = @(Get-AppxPackageManifest -Package $installed).Package.Applications.Application | Select-Object -First 1
@@ -3743,6 +3805,20 @@ try {
   $chromeRegistryParsing = Patch-ChromePluginWindowsRegistryParsing $workApp
   Write-Log "Chrome localized registry parsing patch result: $chromeRegistryParsing"
 
+  # Validate the runtime inside the package copy before it can enter an MSIX.
+  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyModelExperience)) {
+    $stagedNodeModules = Join-Path $workApp 'resources\cua_node\bin\node_modules'
+    $entryInstructions = Repair-WindowsCuaEntryInstructions -NodeModulesRoot $stagedNodeModules
+    Write-Log "Windows CUA entry instructions patch result: $entryInstructions"
+    $stagedHelper = Join-Path $stagedNodeModules '@oai\sky\bin\windows\codex-computer-use.exe'
+    $helperPatch = Repair-StagedWindowsComputerUseHelper `
+      -HelperPath $stagedHelper `
+      -PatcherPath (Join-Path $PSScriptRoot 'patch-computer-use-helper-win10.ps1') `
+      -BackupRoot (Join-Path $tempWork 'helper-backup') `
+      -PatchRequested:$PatchWindows10ScreenshotHelper
+    Write-Log "staged Windows 10 helper patch result: $helperPatch"
+  }
+
   $patched = Invoke-PatchAppAsar $workApp $sourceApp $tempWork
   $asar = Join-Path $workApp 'resources\app.asar'
   if ($DryRun) {
@@ -3759,12 +3835,22 @@ try {
     $publisher = Get-ManifestPublisher $workPackageRoot
     $cert = Get-OrCreateSigningCertificate $publisher
     Trust-SigningCertificate $cert
+    if ($PreserveSourceVersion) {
+      Write-Log 'preserving source identity for the separately authorized exact-artifact watcher'
+    } else {
+      $updateVersion = Set-MsixUpdateVersion -ManifestPath (Join-Path $workPackageRoot 'AppxManifest.xml')
+      Write-Log "transactional update package version: $updateVersion"
+    }
     Invoke-MakeAppxPack $makeappx $workPackageRoot $msixPath
     Invoke-SignPackage $signtool $msixPath $cert
+    # Prepared artifacts also feed the external watcher, which verifies their
+    # exact hash before installation. Validate payload before publishing one.
+    $preparedPayload = Test-MsixPayload -Path $msixPath
+    Write-Log "prepared MSIX payload verified: files=$($preparedPayload.Files) blocks=$($preparedPayload.Blocks)"
     Write-Log "patched MSIX: $msixPath"
 
     if ($Install) {
-      Install-PatchedPackage $msixPath (Split-Path -Leaf $sourcePackageRoot)
+      Install-PatchedPackage $msixPath 'OpenAI.Codex'
     }
   }
 

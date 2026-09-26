@@ -10,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 $LogPrefix = '[codex-computer-use-local]'
 $script:ConfigBackupBeforeOverwrite = @{}
 $script:BrowserComputerUsePluginNames = @('browser', 'chrome', 'computer-use')
@@ -461,6 +462,67 @@ function Get-ChromeUserDataDirectoryOverride {
   return $null
 }
 
+function Get-DesktopChromeUserDataDirectory {
+  $localAppData = $env:LOCALAPPDATA
+  if ([string]::IsNullOrWhiteSpace($localAppData)) {
+    $localAppData = Join-Path $env:USERPROFILE 'AppData\Local'
+  }
+  return [System.IO.Path]::GetFullPath((Join-Path $localAppData 'Google\Chrome\User Data'))
+}
+
+function Sync-DesktopVisibleChromeProfileRoot {
+  param([string]$ChromeUserDataDirectory)
+
+  if ([string]::IsNullOrWhiteSpace($ChromeUserDataDirectory) -or
+      -not (Test-Path -LiteralPath $ChromeUserDataDirectory -PathType Container)) {
+    throw "Chrome user data directory is unavailable for Desktop visibility repair: $ChromeUserDataDirectory"
+  }
+
+  $sourceRoot = (Resolve-Path -LiteralPath $ChromeUserDataDirectory).ProviderPath.TrimEnd('\')
+  $desktopRoot = (Get-DesktopChromeUserDataDirectory).TrimEnd('\')
+  if ($sourceRoot -ieq $desktopRoot) {
+    Write-Log "Chrome profile root is already visible to Desktop: $desktopRoot"
+    return $desktopRoot
+  }
+
+  if (Test-Path -LiteralPath $desktopRoot) {
+    if (-not (Test-Path -LiteralPath $desktopRoot -PathType Container)) {
+      throw "Desktop Chrome profile root exists but is not a directory: $desktopRoot"
+    }
+
+    $item = Get-Item -LiteralPath $desktopRoot -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+      Write-Log "preserving existing real Desktop Chrome profile root: $desktopRoot"
+      return $desktopRoot
+    }
+
+    $targets = @($item.Target)
+    if ($targets.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$targets[0])) {
+      throw "Desktop Chrome profile root has an unreadable reparse target: $desktopRoot"
+    }
+    $target = [Environment]::ExpandEnvironmentVariables([string]$targets[0])
+    if (-not [System.IO.Path]::IsPathRooted($target)) {
+      $target = Join-Path (Split-Path -Parent $desktopRoot) $target
+    }
+    try {
+      $resolvedTarget = (Resolve-Path -LiteralPath $target -ErrorAction Stop).ProviderPath.TrimEnd('\')
+    } catch {
+      throw "Desktop Chrome profile root has a missing reparse target: $desktopRoot -> $target"
+    }
+    if ($resolvedTarget -ine $sourceRoot) {
+      throw "Desktop Chrome profile root points at a different directory and was not changed: $desktopRoot -> $resolvedTarget"
+    }
+
+    Write-Log "Desktop Chrome profile root mapping is current: $desktopRoot -> $sourceRoot"
+    return $desktopRoot
+  }
+
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $desktopRoot) | Out-Null
+  New-Item -ItemType Junction -Path $desktopRoot -Target $sourceRoot | Out-Null
+  Write-Log "created Desktop-visible Chrome profile root: $desktopRoot -> $sourceRoot"
+  return $desktopRoot
+}
+
 function Enable-UserEnvironment {
   param(
     [string]$MarketplaceRoot,
@@ -498,9 +560,16 @@ function Enable-UserEnvironment {
   }
 
   $chromeUserDataDirectory = Get-ChromeUserDataDirectoryOverride
+  $desktopChromeUserDataDirectory = $null
   if ($chromeUserDataDirectory) {
     [Environment]::SetEnvironmentVariable('CODEX_CHROME_USER_DATA_DIR', $chromeUserDataDirectory, 'User')
     $env:CODEX_CHROME_USER_DATA_DIR = $chromeUserDataDirectory
+
+    # Desktop's own extension detector never reads CODEX_CHROME_USER_DATA_DIR.
+    # It only scans %LOCALAPPDATA%/%APPDATA% + Google\Chrome\User Data, so a
+    # custom Chrome data directory makes Desktop believe the extension is
+    # uninstalled and delete the native host registration on every launch.
+    $desktopChromeUserDataDirectory = Sync-DesktopVisibleChromeProfileRoot $chromeUserDataDirectory
   } else {
     Write-Log 'warning: Chrome user data directory was not detected; CODEX_CHROME_USER_DATA_DIR was not changed'
   }
@@ -532,6 +601,9 @@ public static class CodexEnvBroadcast {
   }
   if ($chromeUserDataDirectory) {
     Write-Log "enabled CODEX_CHROME_USER_DATA_DIR=$chromeUserDataDirectory for this process and the current user"
+  }
+  if ($desktopChromeUserDataDirectory) {
+    Write-Log "Desktop-visible Chrome profile root ready: $desktopChromeUserDataDirectory"
   }
 }
 
@@ -1916,6 +1988,27 @@ function Install-BundledMarketplacePluginWithCodexCli {
   Write-Log "registered bundled plugin with Codex CLI: $selector"
 }
 
+function Assert-BundledMarketplacePluginInstalledWithCodexCli {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$PluginName
+  )
+
+  # Re-adding an already installed plugin makes the CLI back up its cache entry,
+  # which fails while Desktop or an extension host holds those files. The
+  # invariant Desktop reads is the installed state itself, so only add when the
+  # plugin is actually missing.
+  if (Test-BundledMarketplacePluginInstalledWithCodexCli $PluginName) {
+    Write-Log "bundled plugin already registered with Codex CLI: $PluginName@openai-bundled"
+    return
+  }
+
+  Install-BundledMarketplacePluginWithCodexCli $PluginName
+  if (-not (Test-BundledMarketplacePluginInstalledWithCodexCli $PluginName)) {
+    throw "Codex CLI did not report $PluginName@openai-bundled as installed after registration"
+  }
+}
+
 function Get-BundledMarketplacePluginListWithCodexCli {
   param([switch]$IncludeAvailable)
 
@@ -3189,6 +3282,81 @@ function Test-ChromeNativeMessagingManifest {
   Write-Log "Chrome native messaging manifest verification ok: origins=$($settings.AllowedOrigins.Count)"
 }
 
+function Test-DesktopChromeNativeHostLifecycle {
+  # Desktop reconciles the Chrome native host on every launch, but only for a
+  # chrome plugin it already considers installed. When that plugin is missing it
+  # takes the opposite branch and removes the manifest, the HKCU key and both
+  # v2 state entries, which is exactly what does not survive a Desktop restart.
+  if (-not (Test-BundledMarketplacePluginInstalledWithCodexCli 'chrome')) {
+    throw 'chrome@openai-bundled is not installed, so Codex Desktop will delete the Chrome native host registration on its next launch'
+  }
+  Write-Log 'Chrome native-host lifecycle verification ok: chrome@openai-bundled is installed, so Desktop reconciles instead of deleting'
+}
+
+function Test-DesktopChromeExtensionVisible {
+  param(
+    [string]$ChromeCacheRoot,
+    [pscustomobject]$RuntimeInventory
+  )
+
+  $checkScript = Join-Path $ChromeCacheRoot 'scripts\check-extension-installed.js'
+  if (-not (Test-Path -LiteralPath $checkScript -PathType Leaf)) {
+    throw "missing official Chrome extension diagnostic: $checkScript"
+  }
+
+  $desktopRoot = Get-DesktopChromeUserDataDirectory
+  if (-not (Test-Path -LiteralPath $desktopRoot -PathType Container)) {
+    throw "Chrome profile root that Codex Desktop scans does not exist: $desktopRoot"
+  }
+
+  # Desktop resolves the profile root from LOCALAPPDATA/APPDATA only. Clearing
+  # both diagnostic overrides makes the official checker use exactly the root
+  # Desktop uses, so a green result here is the invariant Desktop evaluates.
+  $overrideNames = @('CODEX_CHROMIUM_USER_DATA_DIR', 'CODEX_CHROME_USER_DATA_DIR', 'CODEX_CHROMIUM_PREFERENCES_PATH', 'CODEX_CHROME_PREFERENCES_PATH')
+  $previousOverrides = @{}
+  foreach ($name in $overrideNames) {
+    $previousOverrides[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+  }
+  # The official checker reports failures on stderr, which $ErrorActionPreference
+  # 'Stop' would turn into a NativeCommandError before the exit code can be read.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    foreach ($name in $overrideNames) {
+      [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+    $output = @(& $RuntimeInventory.NodePath $checkScript '--browser' 'chrome' '--json' 2>&1)
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    foreach ($name in $overrideNames) {
+      [Environment]::SetEnvironmentVariable($name, $previousOverrides[$name], 'Process')
+    }
+  }
+
+  $text = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+  if ($exitCode -ne 0) {
+    throw "Codex Desktop cannot see the Chrome extension in $desktopRoot (official diagnostic exit=$exitCode): $text"
+  }
+
+  try {
+    $status = $text | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "official Chrome extension diagnostic returned invalid JSON: $text"
+  }
+  if (-not [bool]$status.installed -or -not [bool]$status.enabled) {
+    throw "official Chrome extension diagnostic did not report an installed and enabled extension: $text"
+  }
+
+  $reportedRoot = [string]$status.userDataDirectory
+  if ([string]::IsNullOrWhiteSpace($reportedRoot) -or
+      ([System.IO.Path]::GetFullPath($reportedRoot).TrimEnd('\') -ine $desktopRoot.TrimEnd('\'))) {
+    throw "official Chrome extension diagnostic did not evaluate the Desktop-visible profile root: $reportedRoot"
+  }
+
+  Write-Log "Desktop-visible Chrome extension verification ok: root=$desktopRoot extension=$([string]$status.extensionId)"
+}
+
 function Test-ChromeAppServerHostConfig {
   param(
     [string]$ChromeCacheRoot,
@@ -3354,6 +3522,19 @@ function Get-ScopedBundledPluginCriticalFiles {
   }
 }
 
+function Test-BrowserServiceMatchesHeaderOverlay {
+  param([string]$SourcePath, [string]$TargetPath)
+
+  $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  $nodePath = if ($node) { $node.Source } else { (Get-CurrentCodexAppServerRuntimeInventory).NodePath }
+  $patcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $probeJson = & $nodePath $patcher --input $SourcePath --probe-source
+  if ($LASTEXITCODE -ne 0) { return $false }
+  $probe = $probeJson | ConvertFrom-Json
+  return $probe.state -eq 'original' -and
+    (Get-FileHash -LiteralPath $TargetPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $probe.patchedSha256
+}
+
 function Test-ScopedBundledPluginDirectoryMatchesInstalledPackage {
   param(
     [string]$InstalledMarketplaceRoot,
@@ -3382,6 +3563,11 @@ function Test-ScopedBundledPluginDirectoryMatchesInstalledPackage {
       throw "scoped bundled plugin file is missing from ${TargetLabel}: $targetPath"
     }
     if (-not (Test-FilesMatchByContent $targetPath $sourcePath)) {
+      # The only permitted drift is this source's exact derived header overlay.
+      if ($PluginName -eq 'browser' -and $relativePath -eq 'scripts\browser-service.mjs' -and
+          (Test-BrowserServiceMatchesHeaderOverlay $sourcePath $targetPath)) {
+        continue
+      }
       throw "scoped bundled plugin file differs from the installed package in ${TargetLabel}: $targetPath"
     }
   }
@@ -4252,6 +4438,102 @@ function Test-OfficialComputerUseCache {
   Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256) / trust=$($trustedChromeBrowserClient.TrustMode)"
 }
 
+function Get-ChromeHeaderCompatibilityServicePaths {
+  param(
+    [Parameter(Mandatory = $true)][string]$CodexHomeRoot,
+    [Parameter(Mandatory = $true)][string]$MarketplaceRoot,
+    [Parameter(Mandatory = $true)][string]$InstalledMarketplaceRoot,
+    [Parameter(Mandatory = $true)][string]$NodePath,
+    [Parameter(Mandatory = $true)][string]$PatcherPath
+  )
+  $paths = @()
+  foreach ($plugin in @('browser', 'chrome')) {
+    $descriptor = Join-Path $InstalledMarketplaceRoot "plugins\$plugin\.codex-plugin\plugin.json"
+    if (-not (Test-Path -LiteralPath $descriptor -PathType Leaf)) { continue }
+    $version = [string](Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json).version
+    if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') { throw "invalid $plugin version for header compatibility" }
+    $source = Join-Path $InstalledMarketplaceRoot "plugins\$plugin\scripts\browser-service.mjs"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+      Write-Log "Chrome header compatibility not covered: $plugin@$version has no packaged browser service; skipping only this overlay"
+      continue
+    }
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $source '--probe-source' 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "packaged browser service compatibility probe failed: ${source}: $detail" }
+    $supported = $detail | ConvertFrom-Json -ErrorAction Stop
+    if ($supported.state -eq 'unsupported') {
+      Write-Log "Chrome header compatibility not covered: $plugin@$version sha256=$($supported.sha256); skipping only this overlay, not claiming Chrome auth repair"
+      continue
+    }
+    if ($supported.state -ne 'original') { throw "packaged browser service is not an unmodified supported source: $source" }
+    $roots = @(
+      (Join-Path $MarketplaceRoot "plugins\$plugin"),
+      (Join-Path $CodexHomeRoot "plugins\cache\openai-bundled\$plugin\$version"),
+      (Join-Path (Split-Path -Parent $MarketplaceRoot) "openai-bundled-cache\$plugin\$version"),
+      (Join-Path $CodexHomeRoot ".tmp\bundled-marketplaces\openai-bundled\plugins\$plugin")
+    )
+    foreach ($root in $roots) {
+      $service = Join-Path $root 'scripts\browser-service.mjs'
+      if (Test-Path -LiteralPath $service -PathType Leaf) {
+        $hash = (Get-FileHash -LiteralPath $service -Algorithm SHA256).Hash
+        if ($hash -ne $supported.originalSha256 -and $hash -ne $supported.patchedSha256) {
+          throw "browser service differs from supported package profile $($supported.profile): $service"
+        }
+        $paths += (Resolve-Path -LiteralPath $service).ProviderPath
+      }
+    }
+  }
+  return @($paths | Select-Object -Unique)
+}
+
+function Invoke-ChromeHeaderCompatibility {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$ServicePaths,
+    [Parameter(Mandatory = $true)][string]$NodePath,
+    [Parameter(Mandatory = $true)][string]$PatcherPath,
+    [string]$BackupRoot,
+    [switch]$VerifyOnly
+  )
+  $plans = @()
+  # Preflight every existing copy before changing any of them.
+  foreach ($service in $ServicePaths) {
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $service 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "browser service header compatibility preflight failed: ${service}: $detail" }
+    $state = $detail | ConvertFrom-Json -ErrorAction Stop
+    $plans += [pscustomobject]@{ Path = $service; State = $state.state; Hash = $state.patchedSha256 }
+  }
+  foreach ($plan in $plans) {
+    if ($VerifyOnly) {
+      if ($plan.State -ne 'patched') { throw "missing custom-provider Chrome header compatibility patch: $($plan.Path)" }
+      Write-Log "Chrome custom-provider header compatibility verified: $($plan.Path) sha256=$($plan.Hash)"
+      continue
+    }
+    if ([string]::IsNullOrWhiteSpace($BackupRoot)) { throw 'header compatibility requires a backup root' }
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $plan.Path '--output' $plan.Path '--backup-root' $BackupRoot 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "browser service header compatibility apply failed: $detail" }
+    $result = $detail | ConvertFrom-Json -ErrorAction Stop
+    Write-Log "Chrome custom-provider header compatibility: $($result.state) path=$($plan.Path) sha256=$($result.sha256)"
+    $result
+  }
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
   $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
@@ -4294,6 +4576,9 @@ function Install-ComputerUse {
   # expose the current package version. The CLI otherwise repopulates the cache
   # from a stale reserved descriptor and silently rolls a successful sync back.
   Install-BundledMarketplacePluginWithCodexCli 'browser'
+  # Complete CLI registration before the final package-derived cache sync.
+  Assert-BundledMarketplacePluginInstalledWithCodexCli 'browser'
+  Assert-BundledMarketplacePluginInstalledWithCodexCli 'chrome'
 
   # The installed package is the final cache writer. This prevents both the CLI
   # registration above and Desktop reconciliation from leaving an older cache.
@@ -4314,6 +4599,11 @@ function Install-ComputerUse {
     }
   }
 
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  $entryInstructions = Repair-WindowsCuaEntryInstructions `
+    -NodeModulesRoot (Join-Path (Split-Path -Parent $runtimeInventory.NodePath) 'node_modules') `
+    -BackupRoot (Join-Path $codexHomeResolved 'backups\cua-instructions')
+  Write-Log "Windows CUA entry instructions patch result: $entryInstructions"
   Invoke-ChromeOfficialManifestInstall $chromeCacheRoot $runtimeInventory
   Update-ChromeNativeHostV2State $chromeCacheRoot $runtimeInventory $codexHomeResolved
 
@@ -4327,6 +4617,16 @@ function Install-ComputerUse {
   Enable-UserEnvironment $marketplaceRoot $runtimeInventory
   Test-ConfiguredNodeReplRuntimePaths (Join-Path $codexHomeResolved 'config.toml') $runtimeInventory
   Test-UserCuaRuntimeEnvironment $runtimeInventory
+
+  $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $marketplaceRoot $installedMarketplaceRoot `
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+  if ($headerServices.Count -gt 0) {
+    Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
+      -PatcherPath $headerPatcher `
+      -BackupRoot (Join-Path (Split-Path -Parent $marketplaceRoot) 'chrome-header-compat-backups') | Out-Null
+  }
+
   Test-ScopedBundledPluginAlignment $codexHomeResolved $installedMarketplaceRoot $marketplaceRoot
 
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
@@ -4345,9 +4645,22 @@ function Test-ComputerUse {
   Test-ScopedBundledPluginAlignment $codexHomeResolved $installedMarketplaceRoot $stableMarketplaceRoot
   Test-ConfiguredNodeReplRuntimePaths (Join-Path $codexHomeResolved 'config.toml') $runtimeInventory
   Test-UserCuaRuntimeEnvironment $runtimeInventory
+  $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+  $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot `
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+  if ($headerServices.Count -gt 0) {
+    Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
+      -PatcherPath $headerPatcher -VerifyOnly | Out-Null
+  }
+  $entryInstructions = Repair-WindowsCuaEntryInstructions `
+    -NodeModulesRoot (Join-Path (Split-Path -Parent $runtimeInventory.NodePath) 'node_modules') -VerifyOnly
+  Write-Log "Windows CUA entry instructions verification: $entryInstructions"
   Test-ChromeNativeMessagingManifest $installedChromeCacheRoot
   Test-ChromeAppServerHostConfig $installedChromeCacheRoot $runtimeInventory
   Test-ChromeNativeHostV2State $installedChromeCacheRoot $runtimeInventory $codexHomeResolved
+  Test-DesktopChromeExtensionVisible $installedChromeCacheRoot $runtimeInventory
+  Test-DesktopChromeNativeHostLifecycle
   if ($VerifyAllBundledPluginsAvailable) {
     $stableMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
     Test-AllBundledMarketplacePluginsAvailableWithCodexCli $stableMarketplaceRoot $installedMarketplaceRoot
@@ -4512,6 +4825,8 @@ function Test-ComputerUse {
   if ($userChromeUserDataDirectory -ine $detectedChromeUserDataDirectory) {
     throw "CODEX_CHROME_USER_DATA_DIR does not match the detected Chrome profile root: $detectedChromeUserDataDirectory"
   }
+  Test-DesktopChromeExtensionVisible $chromeCacheVersionRoot $runtimeInventory
+  Test-DesktopChromeNativeHostLifecycle
 
   Test-CodexConfig (Join-Path $codexHomeResolved 'config.toml') $marketplaceRoot
   Test-NodeReplTrustedPathRepair `
@@ -4544,4 +4859,15 @@ if ($VerifyOnly) {
 }
 
 Install-ComputerUse
-Test-ComputerUse
+try {
+  Test-ComputerUse
+} catch {
+  # The install path can leave a freshly rebuilt plugin-cache path temporarily
+  # unavailable to the immediate verification pass. -VerifyOnly already
+  # repairs and retries once; install mode must not be the strictly weaker
+  # path, because the orchestrator runs install mode first.
+  Write-Log "verification after install failed: $($_.Exception.Message)"
+  Write-Log 'repairing local Computer Use plugin and retrying verification'
+  Install-ComputerUse
+  Test-ComputerUse
+}
