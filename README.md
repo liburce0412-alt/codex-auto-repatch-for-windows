@@ -1,5 +1,7 @@
 # Codex 自动化重补丁 for Windows
 
+<p align="center"><img src="assets/readme-mark.png" alt="Codex Windows patch" width="160"></p>
+
 [English](README.en.md)
 
 Windows 商店更新 Codex Desktop 后，自动重新应用已适配的本地补丁，显示实时终端进度；修复失败时打开独立 Codex CLI，保留日志和应用数据备份。项目由 [liburce0412-alt](https://github.com/liburce0412-alt) 维护。
@@ -19,9 +21,17 @@ Windows 商店更新 Codex Desktop 后，自动重新应用已适配的本地补
 
 ## 本次兼容更新
 
-已对照原作者主分支和未合并 PR，合入安装包内容校验、Chrome 校验兼容及新版电脑控制识别，并修复新版共享文件中的浏览器侧栏发现问题。[对比与验证记录](references/upstream-20260926-integration.md)列出了精确来源和测试边界。实际待更新包 `26.924.1866.0` 的默认范围预检通过；这不代表已经安装或完成新版界面验收。
+已合并上游主分支至 `3253055`，包含 Desktop `26.924.2738` 的 Fast Mode 匹配、Chrome `26.924.22138` 请求头适配，以及按精确哈希选择的额外 Win10 截图配置。此前已提前整合的 #68～#73 现已在上游合并；#74～#76 仍未纳入。[此前对比与验证记录](references/upstream-20260926-integration.md)保留了旧版本的精确来源和测试边界。代码合并不代表新版 Desktop 已安装或完成真实界面验收。
 
 自动更新继续使用原版本号的精确包交接，并保留既有备份、CLI 备用终端和成功后历史清理。手动直接安装工具使用上游的递增修订号原地更新，两条流程不能混用。技能更新不会替用户点击 Desktop 更新按钮。
+
+## 修复范围与对话续接
+
+Fast Mode、Power/Ultra、模型过滤及客户端入口的修复通常需要重新打包安装；缓存、运行时路径、市场配置和历史数据问题通常只需修复本地环境。先根据检查结果选择范围。
+
+可以在当前 Codex 对话中发起修复。若需关闭或更新 Desktop，实际安装必须由已确认能独立存活的安装进程接手，并提前保存备份、安装状态和剩余验收步骤。重新打开后回到原对话发送“继续”，先检查已有安装结果，不要重复安装。明确报错或安装完成后仍打不开，应按失败排查。
+
+“听话水”指可选的内置系统提示词配置，使用 [`assets/system-prompt.md`](assets/system-prompt.md) 和 `model_instructions_file`；仅在明确要求时按 [SKILL.md](SKILL.md#optional-model-instructions-file) 配置，不随合并或重补丁自动启用。
 
 ## 安装
 
@@ -76,7 +86,7 @@ Disable-ScheduledTask -TaskName 'Codex Desktop Post-Update Repair'
 
 ## 失败、恢复与清理
 
-独立 CLI 位于 `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<版本>`，不依赖卸载后消失的 WindowsApps 路径。自动打开终端只代表 CLI 入口可用，不代表网络或模型请求成功。
+独立 CLI 位于 `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<版本>`，不依赖卸载后消失的 WindowsApps 路径。打开终端或通过 `--version` 不代表 CLI 交互启动成功：已观察到 `0.158.0-alpha.2` 的复制版因缺少后台服务所需的完整本地包而退出。此合并未修复该回退问题，也未修复签名证书仅被当前用户信任时的 `0x800B0109` 安装失败。
 
 商店包替换后若安装失败，桌面版可能暂时不可用，流程会打开 CLI，不会自动回装商店版。可以随后通过 Microsoft Store 重新安装桌面版。原版恢复安装包无需预先准备；**应用数据备份仍然必需**。
 

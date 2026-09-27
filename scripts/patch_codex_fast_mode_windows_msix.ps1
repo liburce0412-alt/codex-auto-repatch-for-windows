@@ -717,7 +717,7 @@ const legacyOriginalRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\
 const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e\?\.hostId\?\?\2,(\w+)=(\w+\(\4\)),\{data:(\w+)\}=(\w+\(\w+,\4\)),(\w+)=\7\?\.requirements\?\.featureRequirements\?\.fast_mode===!1;return!\(\5\?\.authMethod!==`chatgpt`\|\|\9\)\}/;
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
 const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
-const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`(?:&&\4!==`personalAccessToken`)?\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
 if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || currentManagerCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
@@ -1672,9 +1672,12 @@ function patchDesktopFeatureSender(file) {
 function patchDesktopFeatureMain(file) {
   const before = read(file);
   const patchedMainFragment = 'browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0';
+  // Desktop 26.917 dropped `computerUseNodeRepl` from the env gate, so only the slot-shaped
+  // feature object is rewritten and the legacy fragment above never appears on a re-run.
   const patchedMainPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
   const envGatePattern = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4/;
-  if (!before.includes(patchedMainFragment) && !patchedMainPattern.test(before) &&
+  if (!before.includes(patchedMainFragment) &&
+      !patchedMainPattern.test(before) &&
       (!before.includes('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') ||
        (!envGatePattern.test(before) &&
         !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before)))) {
@@ -1692,7 +1695,8 @@ function patchDesktopFeatureMain(file) {
   );
 
   if (after === before &&
-      !before.includes(patchedMainFragment) && !patchedMainPattern.test(before)) {
+      !before.includes(patchedMainFragment) &&
+      !patchedMainPattern.test(before)) {
     process.stderr.write('browser-use-desktop-feature-main-patch-target-not-found\n');
     process.exit(2);
   }

@@ -1,5 +1,7 @@
 # Codex Auto Repatch for Windows
 
+<p align="center"><img src="assets/readme-mark.png" alt="Codex Windows patch" width="160"></p>
+
 [简体中文](README.md)
 
 Reapply compatible local Codex Desktop patches after Microsoft Store updates, show live terminal progress, and open an independent Codex CLI if repair fails. Maintained by [liburce0412-alt](https://github.com/liburce0412-alt).
@@ -20,9 +22,17 @@ The next default-scope or full repack also adds browser profile import exception
 
 ## Compatibility update
 
-The reviewed upstream main and pending PRs provide payload verification, Chrome verification compatibility and modern Computer Use matching. This fork also fixes browser sidebar discovery in the new shared bundle. The [integration record](references/upstream-20260926-integration.md) lists exact sources and validation limits. The default-scope dry run passed against the actual staged `26.924.1866.0` package; installation and new-version UI acceptance have not been performed.
+Upstream main is merged through `3253055`, including Desktop `26.924.2738` Fast Mode matching, the Chrome `26.924.22138` header profile, and additional exact-hash Windows 10 screenshot profiles. Previously integrated PRs #68–#73 are now merged upstream; #74–#76 remain excluded. The [earlier integration record](references/upstream-20260926-integration.md) preserves the previous sources and validation limits. A code merge does not establish installation or real Desktop acceptance of the newer version.
 
 Automatic repair retains its source-version artifact handoff, data backup, CLI fallback and successful-restart history cleanup. Generic manual direct installers instead use upstream's revision-incrementing in-place update. Do not mix these contracts. Updating the skill does not click Desktop's update button.
+
+## Repair scope and conversation continuity
+
+Fast Mode, Power/Ultra, model filtering and Desktop entry-point repairs usually require repackaging and installation. Cache, runtime-path, marketplace and history-data issues usually need only local environment repair. Choose the scope from the diagnosis.
+
+You may initiate repair in the current Codex conversation. Any deployment that closes or updates Desktop must run in an installer verified to survive independently, with backups, installer status and remaining acceptance steps recorded beforehand. After reopening, return to the original conversation and say "continue"; inspect the existing result before starting another installation. An explicit error or an app that remains unstartable after installation requires diagnosis.
+
+"Tinghuashui" means the optional bundled system-prompt configuration using [`assets/system-prompt.md`](assets/system-prompt.md) and `model_instructions_file`. Configure it only on explicit request through [SKILL.md](SKILL.md#optional-model-instructions-file); merging or repatching does not enable it.
 
 ## Install
 
@@ -73,7 +83,7 @@ Disabling the task does not cancel an active deployment. Do not terminate a pack
 
 Runtime records live under `%USERPROFILE%\.codex\automation`. Logs are in `logs`; each `install-handoffs\<run-id>` contains the artifact and installation records. The latest successful run's `appdata-backup` and signed artifact are retained. After a later stable successful installation, superseded run directories become eligible for manifest-verified cleanup, including failed builds. Audit manifests live in `cleanup-reports`. Optional original media belongs at `store-recovery\<version>\original.msix` and is retained.
 
-The independent CLI and companion executables live under `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>`, outside WindowsApps. Opening a terminal does not prove API/network access. Never publish authorization records, credentials, logs, application data, generated packages or signing keys. See [update safety and cleanup](references/local-post-update-safety.md).
+The independent CLI and companion executables live under `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>`, outside WindowsApps. Opening a terminal or passing `--version` does not prove interactive startup: the copied `0.158.0-alpha.2` CLI has been observed exiting because its background-server mode requires a complete local package. This merge does not fix that fallback failure or the `0x800B0109` deployment failure when the signing certificate is trusted only for the current user. Never publish authorization records, credentials, logs, application data, generated packages or signing keys. See [update safety and cleanup](references/local-post-update-safety.md).
 
 When application data on another AppX volume carries EFS encryption, ordinary file copying can fail with an encryption error. Backup and restore now copy file content through streams while retaining hash and path-boundary checks; a failed backup still blocks removal. Update and redeploy the automation scripts before deliberately retrying this failure. See the [encrypted-file backup case](references/local-post-update-safety.md#encrypted-application-data-2026-09-24).
 
