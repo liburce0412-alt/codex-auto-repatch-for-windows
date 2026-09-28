@@ -127,6 +127,14 @@ $before=$script:addCalls
 $outcome=Invoke-RecoverableMsixInstall $target $recovery -ValidateInstalledPackage {param($package)}
 Assert (-not $outcome.Success -and $outcome.Recovered -and $outcome.Package.PackageFullName -eq 'original-package') 'deployment failure retains and validates the original package'
 Assert ($script:addCalls -eq $before+1) 'no recovery deployment when the original remains registered'
+$before=$script:addCalls
+Expect-Failure {
+  Invoke-RecoverableMsixInstall $target $recovery -ValidateInstalledPackage {
+    param($package)
+    throw 'synthetic original validation failure'
+  }
+} 'synthetic deployment failure; original package validation failed: synthetic original validation failure'
+Assert ($script:addCalls -eq $before+1) 'original validation failure never triggers a recovery deployment'
 $script:failDeployment=$false
 $before=$script:addCalls
 Expect-Failure {Invoke-RecoverableMsixInstall $target $target -ValidateInstalledPackage {param($package)}} 'Recovery must be validated'

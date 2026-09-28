@@ -388,6 +388,16 @@ Desktop `26.917.9434.0` and `26.917.8451.0` re-sign the `D09A2F3F` code again. E
 - On Windows 10 build `19045`, the isolated profile harness passed for both labels (`-SkyVersion 0.7.1-9493AF2C` and `-SkyVersion 0.7.1-2AA2A7A9`): original detection, candidate hash, installation, idempotent installation, rollback, idempotent rollback, backup hash and rejection of an unknown input hash. It also asserts that the pending end-to-end validation field remains empty.
 - The patched `AA7DA8D2` helper, driven directly over its stdio protocol from one external process, returned a screenshot for 25 of 25 `get_window_state` calls against a Visual Studio Code window, with a 0.4-second pause between calls. Screenshot payload lengths varied (14 distinct values), and no `SetIsBorderRequired`, `0x80004002` or other stderr output occurred. The same driver on the original `9493AF2C` helper failed all 10 calls, each with `SetIsBorderRequired` / `0x80004002`.
 
+An independent local interactive smoke test was run on Windows 10 Pro 22H2 build `19045.6466` against the installed `@oai/sky 0.7.1` helper with original hash `9493AF2C` and patched hash `AA7DA8D2`:
+
+- Before repair, a screenshot-inclusive state request reproduced `SetIsBorderRequired failed: No such interface supported (0x80004002)`.
+- After repair, a fresh `@oai/sky` session captured a real Notepad window successfully, returning one screenshot (`1068x595`) together with its accessibility tree.
+- `type_text` inserted `Codex CUA local test`; a subsequent state request returned the updated accessibility value and a rendered screenshot.
+- A screenshot-backed coordinate click opened Notepad's `Format` menu, and `Escape` closed it successfully.
+- No helper process remained after the test session.
+
+This smoke test demonstrates screenshot capture, text input, and coordinate mouse input on this host. It does not promote `EndToEndValidatedDesktopVersion`: it did not include a continuously animating native target, a long-duration resource soak, or the separate `2AA2A7A9` helper.
+
 `EndToEndValidatedDesktopVersion` remains `null` for both profiles. The soak frames were not decoded and visually inspected, and a code editor is not the continuously animating native target that `SKILL.md` requires. No capture ran against the `2AA2A7A9` helper. In that session `list_windows` returned neither a console window nor the running Task Manager, so no animated native target was captured.
 
 When driving the helper outside Desktop, point `CODEX_HOME` at a disposable directory. Run against a real Codex home, the helper rewrote the `notify` hook in `config.toml` to its own executable path and re-serialized the whole file, so a test copy silently replaced the hook that Desktop had configured. Pointed at an empty directory, it created `config.toml`, the goals, logs, memories, queue and state SQLite databases, `installation_id` and `skills` there.

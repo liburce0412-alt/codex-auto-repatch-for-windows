@@ -165,7 +165,11 @@ function Invoke-RecoverableMsixInstall {
     $failure = $_.Exception.Message
     $current = Get-AppxPackage -Name $PackageName -ErrorAction Stop | Sort-Object Version -Descending | Select-Object -First 1
     if ($current -and $current.PackageFullName -eq $update.Existing.PackageFullName) {
-      & $ValidateInstalledPackage $current | Out-Null
+      try {
+        & $ValidateInstalledPackage $current | Out-Null
+      } catch {
+        throw "Update failed: $failure; original package validation failed: $($_.Exception.Message)"
+      }
       return [pscustomobject]@{Success=$false;Recovered=$true;Package=$current;Error=$failure}
     }
     if (-not $current -or [version]$current.Version -ne $update.Target.Version -or
