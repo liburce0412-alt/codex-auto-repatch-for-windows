@@ -1,14 +1,16 @@
 param(
   [Parameter(Mandatory = $true)][string]$OriginalService,
   [Parameter(Mandatory = $true)][string]$TemporaryRoot,
-  [string]$OtherSupportedService
+  [string]$OtherSupportedService,
+  [string]$RuntimeService,
+  [string]$OtherRuntimeService
 )
 $ErrorActionPreference='Stop'
 $tokens=$null; $errors=$null
 $installer=Join-Path $PSScriptRoot 'install-computer-use-local.ps1'
 $ast=[Management.Automation.Language.Parser]::ParseFile($installer,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Installer parse failed.'}
-foreach($name in @('Get-ChromeHeaderCompatibilityServicePaths','Invoke-ChromeHeaderCompatibility','Test-BrowserServiceMatchesHeaderOverlay','Test-ScopedBundledPluginDirectoryMatchesInstalledPackage','Get-ScopedBundledPluginCriticalFiles','Get-PluginVersion','Test-FilesMatchByContent')) {
+foreach($name in @('Get-CuaBrowserHeaderCompatibilityServicePaths','Get-ChromeHeaderCompatibilityServicePaths','Invoke-ChromeHeaderCompatibility','Test-BrowserServiceMatchesHeaderOverlay','Test-ScopedBundledPluginDirectoryMatchesInstalledPackage','Get-ScopedBundledPluginCriticalFiles','Get-PluginVersion','Test-FilesMatchByContent')) {
   $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
   if(-not $definition){throw "Missing function: $name"}
   # AST-only imports do not retain the originating file's PSScriptRoot.
@@ -83,6 +85,73 @@ Assert (@(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -File).Count -e
 Assert ((Get-Content -LiteralPath $config -Raw) -eq 'model_provider = "untouched"') 'Config was modified.'
 Assert ((Get-Content -LiteralPath $optional -Raw) -eq 'optional plugin must remain unchanged') 'Optional plugin was modified.'
 foreach($service in $paths){Assert ((Get-Content -LiteralPath (Join-Path (Split-Path -Parent $service) 'browser-client.mjs') -Raw) -eq 'client must remain unchanged') 'Trusted client bytes changed.'}
+if ($RuntimeService) {
+  $relative = 'node_modules\@oai\browser-desktop\scripts\browser-service.mjs'
+  $sourceBin = Join-Path $installed 'cua_node\bin'
+  $currentBins = @((Join-Path $root 'runtimes\current-a\bin'), (Join-Path $root 'runtimes\current-b\bin'))
+  $staleBin = Join-Path $root 'runtimes\stale\bin'
+  $runtimeHash = (Get-FileHash -LiteralPath $RuntimeService).Hash
+  foreach ($bin in @($sourceBin, $staleBin) + $currentBins) {
+    $service = Join-Path $bin $relative
+    New-Item -ItemType Directory -Path (Split-Path -Parent $service) -Force | Out-Null
+    Copy-Item -LiteralPath $RuntimeService -Destination $service
+    [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $service) 'browser-client.mjs'), 'trusted runtime client')
+  }
+  $descriptor = Join-Path $sourceBin 'node_modules\@oai\browser-desktop\package.json'
+  [IO.File]::WriteAllText($descriptor, '{"name":"@oai/browser-desktop","version":"0.1.1","exports":{"./service":"./scripts/browser-service.mjs"}}')
+  $inventory = [pscustomobject]@{
+    NodePath = (Join-Path $currentBins[0] 'node.exe')
+    ReferenceNodePath = (Join-Path $sourceBin 'node.exe')
+    AllowedCuaBinRoots = @($currentBins[0], $currentBins[1], $currentBins[0])
+  }
+  $pathOptions.RuntimeInventory = $inventory
+  $allPaths = @(Get-ChromeHeaderCompatibilityServicePaths @pathOptions)
+  Assert ($allPaths.Count -eq 10) 'Current runtimes must join plugin paths, with duplicates removed.'
+  $runtimePaths = @($currentBins | ForEach-Object { Join-Path $_ $relative })
+  $runtimeInvoke = @{ServicePaths=$allPaths;NodePath=$node;PatcherPath=$patcher;BackupRoot=(Join-Path $root 'backups')}
+  Expect-Failure { Invoke-ChromeHeaderCompatibility @runtimeInvoke -VerifyOnly } 'missing custom-provider'
+  Assert ((Get-FileHash -LiteralPath $runtimePaths[0]).Hash -eq $runtimeHash) 'Runtime VerifyOnly wrote a patch.'
+  [IO.File]::WriteAllText($runtimePaths[1], 'unknown runtime')
+  Expect-Failure { Get-ChromeHeaderCompatibilityServicePaths @pathOptions } 'runtime differs from supported package profile'
+  Expect-Failure { Invoke-ChromeHeaderCompatibility @runtimeInvoke } 'preflight failed'
+  Assert ((Get-FileHash -LiteralPath $runtimePaths[0]).Hash -eq $runtimeHash) 'Runtime batch failure changed an earlier file.'
+  if ($OtherRuntimeService) {
+    Assert ((Get-FileHash -LiteralPath $OtherRuntimeService).Hash -ne $runtimeHash) 'Expected a distinct runtime profile.'
+    Copy-Item -LiteralPath $OtherRuntimeService -Destination $runtimePaths[1] -Force
+    Expect-Failure { Get-ChromeHeaderCompatibilityServicePaths @pathOptions } 'runtime differs from supported package profile'
+  }
+  Remove-Item -LiteralPath $runtimePaths[1] -Force
+  Expect-Failure { Get-ChromeHeaderCompatibilityServicePaths @pathOptions } 'runtime service is missing'
+  Copy-Item -LiteralPath $RuntimeService -Destination $runtimePaths[1]
+  $packagedRuntime = Join-Path $sourceBin $relative
+  [IO.File]::WriteAllText($packagedRuntime, 'future packaged runtime')
+  Assert (@(Get-ChromeHeaderCompatibilityServicePaths @pathOptions).Count -eq 8) 'Unsupported runtime must not hide supported plugins.'
+  Copy-Item -LiteralPath $RuntimeService -Destination $packagedRuntime -Force
+  foreach ($source in $packagedServices) { [IO.File]::WriteAllText($source, 'future official browser service') }
+  Assert (@(Get-ChromeHeaderCompatibilityServicePaths @pathOptions).Count -eq 2) 'Unsupported plugins must not hide the supported runtime.'
+  foreach ($source in $packagedServices) { Copy-Item -LiteralPath $OriginalService -Destination $source -Force }
+  $noPlugins = Join-Path $root 'no-plugin-marketplace'
+  New-Item -ItemType Directory -Path $noPlugins | Out-Null
+  $savedMarketplace = $pathOptions.InstalledMarketplaceRoot
+  $pathOptions.InstalledMarketplaceRoot = $noPlugins
+  Assert (@(Get-ChromeHeaderCompatibilityServicePaths @pathOptions).Count -eq 2) 'Runtime discovery must work without plugin descriptors.'
+  $pathOptions.InstalledMarketplaceRoot = $savedMarketplace
+  Invoke-ChromeHeaderCompatibility @runtimeInvoke | Out-Null
+  Assert (@(Get-ChromeHeaderCompatibilityServicePaths @pathOptions).Count -eq 10) 'Complete runtime patches must remain discoverable.'
+  Invoke-ChromeHeaderCompatibility @runtimeInvoke -VerifyOnly | Out-Null
+  $backupCount = @(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -File).Count
+  Assert ($backupCount -eq 10) 'Each runtime write must have an original backup.'
+  Invoke-ChromeHeaderCompatibility @runtimeInvoke | Out-Null
+  Assert (@(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -File).Count -eq $backupCount) 'Runtime reapply created redundant backups.'
+  foreach ($bin in @($sourceBin, $staleBin)) {
+    Assert ((Get-FileHash -LiteralPath (Join-Path $bin $relative)).Hash -eq $runtimeHash) 'Packaged or stale runtime was modified.'
+  }
+  foreach ($service in $runtimePaths) {
+    Assert ([IO.File]::ReadAllText((Join-Path (Split-Path -Parent $service) 'browser-client.mjs')) -ceq 'trusted runtime client') 'Trusted runtime client changed.'
+  }
+  [IO.File]::AppendAllText($runtimePaths[1], "`n")
+  Expect-Failure { Get-ChromeHeaderCompatibilityServicePaths @pathOptions } 'runtime differs from supported package profile'
+}
 # Scoped final verification must accept the exact overlay, and reject other drift.
 $browserRoot = Join-Path $marketplace 'plugins\browser'
 $browserDescriptor = Join-Path $browserRoot '.codex-plugin\plugin.json'

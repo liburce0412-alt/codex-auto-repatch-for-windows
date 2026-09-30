@@ -23,6 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-windows-fast-patch]'
 $ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+. (Join-Path $ScriptRoot 'lib\toml-config.ps1')
 if ([string]::IsNullOrWhiteSpace($PatchScript)) {
   $PatchScript = Join-Path $ScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
 }
@@ -128,8 +129,7 @@ function Set-TomlTable {
     if ($value -is [bool]) {
       "$key = $($value.ToString().ToLowerInvariant())"
     } else {
-      $escaped = [string]$value -replace "'", "''"
-      "$key = '$escaped'"
+      "$key = $(ConvertTo-CodexTomlString ([string]$value))"
     }
   }
   $body = ($lines -join "`r`n") + "`r`n"
@@ -138,7 +138,7 @@ function Set-TomlTable {
   $replacement = "$Header`r`n$body"
 
   if ([regex]::IsMatch($content, $pattern)) {
-    $content = [regex]::Replace($content, $pattern, $replacement, 1)
+    $content = [regex]::Replace($content, $pattern, { $replacement }, 1)
   } else {
     if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
       $content += "`r`n"
@@ -149,6 +149,7 @@ function Set-TomlTable {
     $content += $replacement
   }
 
+  Test-CodexTomlContent $content
   Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header"
   Write-Utf8NoBom $ConfigPath $content
 }
@@ -169,8 +170,7 @@ function Set-TomlTableValue {
   if ($Value -is [bool]) {
     $valueText = $Value.ToString().ToLowerInvariant()
   } else {
-    $escaped = [string]$Value -replace "'", "''"
-    $valueText = "'$escaped'"
+    $valueText = ConvertTo-CodexTomlString ([string]$Value)
   }
   $line = "$Key = $valueText"
   $escapedHeader = [regex]::Escape($Header)
@@ -181,9 +181,9 @@ function Set-TomlTableValue {
     $content = [regex]::Replace($content, $tablePattern, {
       param($match)
       $body = $match.Groups['body'].Value
-      $keyPattern = "(?m)^\s*$escapedKey\s*=.*$"
+      $keyPattern = "(?m)^[ \t]*$escapedKey[ \t]*=[^\r\n]*"
       if ([regex]::IsMatch($body, $keyPattern)) {
-        $body = [regex]::Replace($body, $keyPattern, $line, 1)
+        $body = [regex]::Replace($body, $keyPattern, { $line }, 1)
       } else {
         if ($body.Length -gt 0 -and -not $body.EndsWith("`n")) {
           $body += "`r`n"
@@ -202,6 +202,7 @@ function Set-TomlTableValue {
     $content += "$Header`r`n$line`r`n"
   }
 
+  Test-CodexTomlContent $content
   Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header-$Key"
   Write-Utf8NoBom $ConfigPath $content
 }

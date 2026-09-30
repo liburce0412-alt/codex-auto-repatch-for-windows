@@ -178,6 +178,13 @@ if (-not $receiverIf) {
   throw 'desktop-feature receiver finder condition was not found in the patch script'
 }
 $receiverTest = [scriptblock]::Create('param([string]$text) (' + $receiverIf.Clauses[0].Item1.Extent.Text + ')')
+$senderLoop = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.ForEachStatementAst] -and
+      $node.Condition.Extent.Text -ceq '$desktopFeatureSenderCandidates'
+  }, $true)
+$senderIf = $senderLoop.Body.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] }, $true)
+$senderTest = [scriptblock]::Create('param([string]$text) (' + $senderIf.Clauses[0].Item1.Extent.Text + ')')
 
 $hasNativePreference = Test-Path Variable:\PSNativeCommandUseErrorActionPreference
 $previousNativePreference = $null
@@ -281,6 +288,31 @@ try {
   }
   Assert-ValidJavaScript -Name '26.917 main' -AssetPath $main917.AssetPath
   Assert-Idempotent -Name '26.917 main' -AssetPath $main917.AssetPath -Target 'main'
+
+  # 26.928 adds an independent MCP Apps field before inAppBrowserUseAllowed.
+  # Preserve it byte-for-byte in both payload directions instead of enabling it.
+  $sender928Source = $senderSlotSource.Replace('inAppBrowserUse:s.inAppBrowserUse,', 'inAppBrowserUse:s.inAppBrowserUse,mcpAppsBrowserUse:s.mcpAppsBrowserUse,')
+  $main928Source = $main917Source.Replace('inAppBrowserUse:e.inAppBrowserUse,', 'inAppBrowserUse:e.inAppBrowserUse,mcpAppsBrowserUse:e.mcpAppsBrowserUse,')
+  foreach ($case in @(
+      @{ Name = '26.928 sender'; Source = $sender928Source; Target = 'sender'; Finder = $senderTest; Slot = 'mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
+      @{ Name = '26.928 main'; Source = $main928Source; Target = 'main'; Finder = $receiverTest; Slot = 'mcpAppsBrowserUse:e.mcpAppsBrowserUse' })) {
+    if (-not (& $case.Finder $case.Source)) { throw "Original finder missed $($case.Name)" }
+    $result = Invoke-PatcherFixture -Name $case.Name -Source $case.Source -Target $case.Target -ExpectedExitCode 0
+    $patched928 = [IO.File]::ReadAllText($result.AssetPath)
+    if (-not $patched928.Contains('inAppBrowserUse:!0,' + $case.Slot + ',inAppBrowserUseAllowed:!0,')) { throw "New slot lost or modified: $($case.Name)" }
+    if (-not (& $case.Finder $patched928)) { throw "Patched finder missed $($case.Name)" }
+    Assert-ValidJavaScript -Name $case.Name -AssetPath $result.AssetPath
+    Assert-Idempotent -Name $case.Name -AssetPath $result.AssetPath -Target $case.Target
+    if ($case.Target -eq 'sender') {
+      $behavior = $patched928.Replace('const send=(c,p)=>p;', 'let sent;const send=(c,p)=>{sent=p};const logger={info(){}};') + 'notify({mcpAppsBrowserUse:false,computerUse:false,browserExtensions:false},false,"win32","test","26.928");if(sent.inAppBrowserUse!==true||sent.inAppBrowserUseAllowed!==true||sent.browserPane!==true||sent.externalBrowserUse!==true||sent.externalBrowserUseAllowed!==true||sent.mcpAppsBrowserUse!==false||sent.computerUse!==false||sent.browserExtensions!==false)throw Error("sender fields changed incorrectly");'
+    } else {
+      $behavior = $patched928 + 'const [,sent]=resolve({mcpAppsBrowserUse:false,computerUse:false,browserExtensions:false},null,"linux");if(sent.inAppBrowserUse!==true||sent.inAppBrowserUseAllowed!==true||sent.browserPane!==true||sent.externalBrowserUse!==true||sent.externalBrowserUseAllowed!==true||sent.mcpAppsBrowserUse!==false||sent.computerUse!==false||sent.browserExtensions!==false)throw Error("receiver fields changed incorrectly");'
+    }
+    $behaviorFile = Join-Path $fixtureRoot ($case.Target + '-behavior.cjs')
+    [IO.File]::WriteAllText($behaviorFile, $behavior)
+    & $node.Source $behaviorFile
+    if ($LASTEXITCODE -ne 0) { throw "Payload behavior failed: $($case.Name)" }
+  }
 
   foreach ($case in @(
       @{ Name = '26.917 main'; Text = $main917Source; Expected = $true },

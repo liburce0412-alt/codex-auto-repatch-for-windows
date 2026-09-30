@@ -4,6 +4,10 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const PROFILES = [
+  { id: '26.928.20755', originalSha256: '5d3d95d5b8878e73f09a05e110be549c7e69125fcc2c14aaea1e9855aa05e77a', policy: 'w_', insertBefore: 'function qD(t){' },
+  { id: 'browser-desktop-0.1.1-64b3e675', originalSha256: '64b3e6758957d209c58755c9d198237021124f14060b14edb4f9b74288851667', policy: 'wv', insertBefore: 'function OB(t){' },
+  { id: 'browser-desktop-0.1.1-fc0660ba', originalSha256: 'fc0660ba45e6c10b532d8faa0c1bac704d987dad3d4b74478f49fdd82bf90086', policy: 'sv', insertBefore: 'function xO(t){' },
+  { id: '26.924.51851', originalSha256: 'd8988307ecd056703914c3bcb8294469e6cbb65bdf45c790bf6df219d4edb735', policy: 'a_', insertBefore: 'function xD(t){' },
   { id: '26.924.22138', originalSha256: 'b40b10c44f2397b3137c40060ace432cc2487e6075b07551a6944f81bea3bb91', policy: 'a_', insertBefore: 'function xD(t){' },
   { id: '26.924.20706', originalSha256: 'bb9cb10fbe3e20514964ebedfc9151b2464b71d1c52765e81e662c88ea10b267', policy: 'a_', insertBefore: 'function xD(t){' },
   { id: '26.917.71314', originalSha256: '2f5dbc3004622917776e033cc179d94fe778ca9ffc7b7375738471947474bcff', policy: 'zD', insertBefore: 'function kX(t){' },

@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
+. (Join-Path $PSScriptRoot 'lib\toml-config.ps1')
 $LogPrefix = '[codex-computer-use-local]'
 $script:ConfigBackupBeforeOverwrite = @{}
 $script:BrowserComputerUsePluginNames = @('browser', 'chrome', 'computer-use')
@@ -190,8 +191,7 @@ function Set-TomlTable {
     if ($value -is [bool]) {
       "$key = $($value.ToString().ToLowerInvariant())"
     } else {
-      $escaped = [string]$value -replace "'", "''"
-      "$key = '$escaped'"
+      "$key = $(ConvertTo-CodexTomlString ([string]$value))"
     }
   }
   $body = ($lines -join "`r`n") + "`r`n"
@@ -200,7 +200,7 @@ function Set-TomlTable {
   $replacement = "$Header`r`n$body"
 
   if ([regex]::IsMatch($content, $pattern)) {
-    $content = [regex]::Replace($content, $pattern, $replacement, 1)
+    $content = [regex]::Replace($content, $pattern, { $replacement }, 1)
   } else {
     if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
       $content += "`r`n"
@@ -211,6 +211,7 @@ function Set-TomlTable {
     $content += $replacement
   }
 
+  Test-CodexTomlContent $content
   Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header"
   Write-Utf8NoBom $ConfigPath $content
 }
@@ -234,15 +235,14 @@ function Set-TomlTableKey {
   $line = if ($Value -is [bool]) {
     "$Key = $($Value.ToString().ToLowerInvariant())"
   } else {
-    $escapedValue = [string]$Value -replace "'", "''"
-    "$Key = '$escapedValue'"
+    "$Key = $(ConvertTo-CodexTomlString ([string]$Value))"
   }
   if ($tableMatch.Success) {
     $body = $tableMatch.Groups['body'].Value
     $escapedKey = [regex]::Escape($Key)
-    $keyPattern = "(?m)^\s*$escapedKey\s*=.*$"
+    $keyPattern = "(?m)^[ \t]*$escapedKey[ \t]*=[^\r\n]*"
     if ([regex]::IsMatch($body, $keyPattern)) {
-      $body = [regex]::Replace($body, $keyPattern, $line, 1)
+      $body = [regex]::Replace($body, $keyPattern, { $line }, 1)
     } else {
       $body = $line + "`r`n" + $body
     }
@@ -258,6 +258,7 @@ function Set-TomlTableKey {
     $content += "$Header`r`n$line`r`n"
   }
 
+  Test-CodexTomlContent $content
   Backup-ConfigBeforeOverwrite $ConfigPath $Reason
   Write-Utf8NoBom $ConfigPath $content
 }
@@ -4438,13 +4439,63 @@ function Test-OfficialComputerUseCache {
   Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256) / trust=$($trustedChromeBrowserClient.TrustMode)"
 }
 
+function Get-CuaBrowserHeaderCompatibilityServicePaths {
+  param(
+    [Parameter(Mandatory = $true)][object]$RuntimeInventory,
+    [Parameter(Mandatory = $true)][string]$NodePath,
+    [Parameter(Mandatory = $true)][string]$PatcherPath
+  )
+  $relativeRoot = 'node_modules\@oai\browser-desktop'
+  $sourceRoot = Join-Path (Split-Path -Parent $RuntimeInventory.ReferenceNodePath) $relativeRoot
+  $source = Join-Path $sourceRoot 'scripts\browser-service.mjs'
+  $descriptor = Join-Path $sourceRoot 'package.json'
+  if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) { return @() }
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or -not (Test-Path -LiteralPath $descriptor -PathType Leaf)) {
+    throw "packaged browser-desktop runtime is incomplete: $sourceRoot"
+  }
+  $package = Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json
+  if ($package.name -cne '@oai/browser-desktop' -or $package.exports.'./service' -cne './scripts/browser-service.mjs') {
+    throw "unrecognized packaged browser-desktop service export: $descriptor"
+  }
+  $oldPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $output = @(& $NodePath $PatcherPath '--input' $source '--probe-source' 2>&1)
+    $exitCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $oldPreference }
+  $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+  if ($exitCode -ne 0) { throw "packaged browser-desktop compatibility probe failed: ${source}: $detail" }
+  $supported = $detail | ConvertFrom-Json -ErrorAction Stop
+  if ($supported.state -eq 'unsupported') {
+    Write-Log "Chrome header compatibility not covered: browser-desktop@$($package.version) sha256=$($supported.sha256); skipping only this overlay, not claiming CUA browser auth repair"
+    return @()
+  }
+  if ($supported.state -ne 'original') { throw "packaged browser-desktop is not an unmodified supported source: $source" }
+  # Use the selected/current runtime inventory, never every historical cua_node directory.
+  $bins = @($RuntimeInventory.AllowedCuaBinRoots) + @(Split-Path -Parent $RuntimeInventory.NodePath)
+  $paths = @()
+  foreach ($bin in @($bins | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+    $service = Join-Path (Join-Path $bin $relativeRoot) 'scripts\browser-service.mjs'
+    if (-not (Test-Path -LiteralPath $service -PathType Leaf)) {
+      throw "current browser-desktop runtime service is missing: $service"
+    }
+    $hash = (Get-FileHash -LiteralPath $service -Algorithm SHA256).Hash
+    if ($hash -ne $supported.originalSha256 -and $hash -ne $supported.patchedSha256) {
+      throw "browser-desktop runtime differs from supported package profile $($supported.profile): $service"
+    }
+    $paths += (Resolve-Path -LiteralPath $service).ProviderPath
+  }
+  return @($paths | Select-Object -Unique)
+}
+
 function Get-ChromeHeaderCompatibilityServicePaths {
   param(
     [Parameter(Mandatory = $true)][string]$CodexHomeRoot,
     [Parameter(Mandatory = $true)][string]$MarketplaceRoot,
     [Parameter(Mandatory = $true)][string]$InstalledMarketplaceRoot,
     [Parameter(Mandatory = $true)][string]$NodePath,
-    [Parameter(Mandatory = $true)][string]$PatcherPath
+    [Parameter(Mandatory = $true)][string]$PatcherPath,
+    [object]$RuntimeInventory
   )
   $paths = @()
   foreach ($plugin in @('browser', 'chrome')) {
@@ -4487,6 +4538,9 @@ function Get-ChromeHeaderCompatibilityServicePaths {
         $paths += (Resolve-Path -LiteralPath $service).ProviderPath
       }
     }
+  }
+  if ($null -ne $RuntimeInventory) {
+    $paths += @(Get-CuaBrowserHeaderCompatibilityServicePaths -RuntimeInventory $RuntimeInventory -NodePath $NodePath -PatcherPath $PatcherPath)
   }
   return @($paths | Select-Object -Unique)
 }
@@ -4620,7 +4674,7 @@ function Install-ComputerUse {
 
   $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
   $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $marketplaceRoot $installedMarketplaceRoot `
-    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher -RuntimeInventory $runtimeInventory)
   if ($headerServices.Count -gt 0) {
     Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
       -PatcherPath $headerPatcher `
@@ -4648,7 +4702,7 @@ function Test-ComputerUse {
   $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
   $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot `
-    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher -RuntimeInventory $runtimeInventory)
   if ($headerServices.Count -gt 0) {
     Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
       -PatcherPath $headerPatcher -VerifyOnly | Out-Null

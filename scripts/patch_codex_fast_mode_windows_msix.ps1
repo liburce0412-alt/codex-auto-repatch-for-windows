@@ -1645,15 +1645,15 @@ function patchSidebarAvailability(file) {
 function patchDesktopFeatureSender(file) {
   const before = read(file);
   const patchedSenderFragment = 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:';
-  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:!0,externalBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/;
+  const patchedSenderPattern = /inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:!0,externalBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/;
   if (!before.includes('browser_use_availability_resolved') || !before.includes('electron-desktop-features-changed')) {
     process.stderr.write('browser-use-desktop-feature-sender-target-not-found\n');
     process.exit(2);
   }
 
   let after = before.replace(
-    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1browserPane:!0,$2externalBrowserUse:!0,externalBrowserUseAllowed:!0,$3computerUse:'
+    /inAppBrowserUse:[^,}]+,(mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/,
+    'inAppBrowserUse:!0,$1inAppBrowserUseAllowed:!0,$2browserPane:!0,$3externalBrowserUse:!0,externalBrowserUseAllowed:!0,$4computerUse:'
   );
   after = after.replace(
     /browser_use_availability_resolved`,\{safe:\{available:[^,]+,platform:([^,]+),reason:[^,]+,release:([^}]+)\},sensitive:\{browserPane:[^}]+\}\}\)/,
@@ -1674,13 +1674,13 @@ function patchDesktopFeatureMain(file) {
   const patchedMainFragment = 'browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0';
   // Desktop 26.917 dropped `computerUseNodeRepl` from the env gate, so only the slot-shaped
   // feature object is rewritten and the legacy fragment above never appears on a re-run.
-  const patchedMainPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
+  const patchedMainPattern = /inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
   const envGatePattern = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4/;
   if (!before.includes(patchedMainFragment) &&
       !patchedMainPattern.test(before) &&
       (!before.includes('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') ||
        (!envGatePattern.test(before) &&
-        !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before)))) {
+        !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before)))) {
     process.stderr.write('browser-use-desktop-feature-main-target-not-found\n');
     process.exit(2);
   }
@@ -1690,8 +1690,8 @@ function patchDesktopFeatureMain(file) {
     '$1=$2===`win32`?{...$4,browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,...$3.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{computerUse:!0,computerUseNodeRepl:!0}:{}}:$4'
   );
   after = after.replace(
-    /inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:[A-Za-z_$][\w$]*\.browserPane,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1browserPane:!0,$2externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
+    /inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:[A-Za-z_$][\w$]*\.browserPane,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?)externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,computerUse:/,
+    'inAppBrowserUse:!0,$1inAppBrowserUseAllowed:!0,$2browserPane:!0,$3externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
   );
 
   if (after === before &&
@@ -2075,8 +2075,8 @@ function Find-BrowserComputerUsePatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?computerUse:[^,}]+') -or
-         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
+        (($text -match 'inAppBrowserUse:[^,}]+,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?computerUse:[^,}]+') -or
+         ($text -match 'inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
     }
@@ -2092,8 +2092,8 @@ function Find-BrowserComputerUsePatchTargets {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
         (($text -match '([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4') -or
-         ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
-         $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
+         ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
+         $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or ($text -match 'inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
       $desktopFeatureMainTarget = $candidate
       break
     }
@@ -2358,8 +2358,8 @@ function Find-PatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?computerUse:[^,}]+') -or
-         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
+        (($text -match 'inAppBrowserUse:[^,}]+,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?computerUse:[^,}]+') -or
+         ($text -match 'inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
     }
@@ -2375,8 +2375,8 @@ function Find-PatchTargets {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
           (($text -match '([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4') -or
-           ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
-           $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
+           ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
+           $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or ($text -match 'inAppBrowserUse:!0,(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
         $desktopFeatureMainTarget = $candidate
         break
       }
