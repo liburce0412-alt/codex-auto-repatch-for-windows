@@ -24,6 +24,8 @@ The next default-scope or full repack also adds browser profile import exception
 
 Upstream main is merged through `459ed73`, incorporating the eight commits in PRs #80–#82: an optional official MSIX fallback when Store misses a newer build, Windows 10 sky 0.7.4/0.7.5 capture and unwind metadata support, the Desktop `26.928.2636` Chrome service profile, and Windows PowerShell TOML stdin BOM handling. TOML validation prefers a working Python launcher and retains pre-write checks. The [current merge record](references/upstream-20261001-merge.md) describes validation; the [earlier record](references/upstream-20260926-integration.md) retains older sources. Merging code does not apply these optional patches to the current Desktop installation.
 
+Pinned commits from open PRs #83–#85 are also integrated. Both `26.928.2636` and `26.928.3736` Win10 helper profiles are retained, while the identical `26.928.31416` Chrome profile and regression assertion are included once. Local cache repair, strict verification, and real Chrome navigation, Chinese input, clicks and accessibility reads pass on `26.928.2636.0`. The 3736 profiles have not been installed or accepted locally; the Win10 patch remains guarded against Windows 11 installation. The [PR integration and local verification record](references/upstream-20261001-open-prs.md) separates source support, isolated regressions and live operations.
+
 Automatic repair retains its source-version artifact handoff, data backup, CLI fallback and successful-restart history cleanup. Generic manual direct installers instead use upstream's revision-incrementing in-place update. Do not mix these contracts. Updating the skill does not click Desktop's update button.
 
 ## Repair scope and conversation continuity
