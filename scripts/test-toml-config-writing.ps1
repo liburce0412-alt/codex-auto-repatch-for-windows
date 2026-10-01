@@ -3,9 +3,9 @@ param([Parameter(Mandatory = $true)][string]$TemporaryRoot)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\toml-config.ps1')
-$python = (Get-Command python -ErrorAction Stop).Source
-& $python -c 'import tomllib'
-if ($LASTEXITCODE -ne 0) { throw 'This regression requires Python with tomllib.' }
+$python = Resolve-CodexTomlPython
+if (-not $python) { throw 'This regression requires Python with tomllib.' }
+$pythonArguments = $python.Arguments
 $base = [IO.Path]::GetFullPath($TemporaryRoot)
 $root = Join-Path $base ('toml-writing-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -101,7 +101,7 @@ print('TOML_ROUND_TRIP_PASSED cases=' + str(len(records)))
   $oldEncoding = $OutputEncoding
   try {
     $OutputEncoding = [Text.UTF8Encoding]::new($false)
-    ConvertTo-Json -InputObject $records -Depth 5 -Compress | & $python -c $oracle
+    ConvertTo-Json -InputObject $records -Depth 5 -Compress | & $python.Path @pythonArguments -c $oracle
     Assert ($LASTEXITCODE -eq 0) 'Independent TOML round-trip oracle failed'
   } finally { $OutputEncoding = $oldEncoding }
   # Missing parser tooling is not a TOML syntax error.
@@ -114,5 +114,5 @@ print('TOML_ROUND_TRIP_PASSED cases=' + str(len(records)))
   $resolved = (Resolve-Path -LiteralPath $root).ProviderPath
   if (-not $resolved.StartsWith($base.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test cleanup root' }
   if (@(Get-ChildItem -LiteralPath $resolved -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'Refusing cleanup through a reparse point' }
-  Remove-Item -LiteralPath $resolved -Recurse -Force
+  Remove-Item -LiteralPath $resolved -Recurse
 }
