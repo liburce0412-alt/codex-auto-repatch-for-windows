@@ -18,6 +18,7 @@ param(
   [switch]$OnlyBundledMarketplaceCopy,
   [switch]$OnlyComputerUseSurface,
   [switch]$PatchWindows10ScreenshotHelper,
+  [switch]$PatchWindowsStoreUpdateFallback,
   [Alias('OnlyCustomModels')]
   [switch]$OnlyModelExperience,
   [switch]$OnlyBrowserComputerUse,
@@ -76,6 +77,9 @@ function Assert-ComputerUseSurfaceOptions {
   }
   if ($PatchWindows10ScreenshotHelper -and ($OnlyBundledMarketplaceCopy -or $OnlyModelExperience)) {
     Fail '-PatchWindows10ScreenshotHelper requires the full repair mode'
+  }
+  if ($PatchWindowsStoreUpdateFallback -and ($OnlyBrowserComputerUse -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or $OnlyComputerUseSurface)) {
+    Fail '-PatchWindowsStoreUpdateFallback requires the full repair mode'
   }
 }
 
@@ -3046,6 +3050,12 @@ function Invoke-PatchAppAsar {
   }
   Write-Log 'Node REPL trusted-paths syntax check passed'
 
+  $windowsStoreFallback = 'not-requested'
+  if ($PatchWindowsStoreUpdateFallback) {
+    $windowsStoreFallback = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-windows-store-update-fallback.cjs') @((Join-Path $extractDir '.vite\build'))
+    Write-Log "Windows Store update fallback patch result: $windowsStoreFallback"
+  }
+
   if ($DryRun) {
     Write-Log 'dry run: patch target validation completed; no package was changed'
     return $false
@@ -3064,6 +3074,7 @@ function Invoke-PatchAppAsar {
       $computerUse -eq 'already-patched' -and
       $nodeReplTrustedPaths -eq 'already-patched' -and
       $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
+      $windowsStoreFallback -in @('already-patched', 'not-requested') -and
       $bundledMarketplaceCopy -eq 'already-patched' -and
       $computerUseSurface -in @('already-patched', 'not-applicable')) {
     Write-Log 'asar patch already present'

@@ -31,6 +31,10 @@ $values = @(
   ("line`nnext`r`n`tend" + [char]0 + [char]0x7f),
   'C:\trailing\'
 )
+function Write-Log([string]$Message) {}
+Test-CodexTomlContent "sentinel = 'valid'"
+Assert $true 'Native stdin rejected valid TOML; run this regression on Windows PowerShell 5.1 as well as pwsh.'
+Expect-Failure { Test-CodexTomlContent "broken = [`n" }
 try {
   foreach ($scriptName in @('repatch-codex-windows.ps1', 'install-computer-use-local.ps1')) {
     $tokens = $null; $errors = $null
@@ -84,7 +88,7 @@ try {
   }
   $oracle = @'
 import json, pathlib, sys, tomllib
-records = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+records = json.loads(sys.stdin.buffer.read().decode('utf-8-sig'))
 for r in records:
     raw = pathlib.Path(r['path']).read_bytes()
     assert not raw.startswith(b'\xef\xbb\xbf'), r['path']

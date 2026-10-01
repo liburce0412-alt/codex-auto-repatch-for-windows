@@ -351,6 +351,7 @@ $OnlyBundledMarketplaceCopy = $false
 $AddLocalPluginMarketplace = $false
 $VerifyFastModeRequest = $false
 $PatchWindows10ScreenshotHelper = $false
+$PatchWindowsStoreUpdateFallback = $false
 Assert-ComputerUseSurfaceOptions
 foreach ($option in @('OnlyBrowserComputerUse','OnlyModelExperience','OnlyBundledMarketplaceCopy','AddLocalPluginMarketplace','VerifyFastModeRequest','PatchWindows10ScreenshotHelper')) {
   Set-Variable -Name $option -Value $true
@@ -381,6 +382,14 @@ foreach ($option in @('OnlyModelExperience','OnlyBundledMarketplaceCopy')) {
   Set-Variable -Name $option -Value $false
 }
 $PatchWindows10ScreenshotHelper = $false
+$PatchWindowsStoreUpdateFallback = $true
+foreach ($option in @('OnlyBrowserComputerUse','OnlyModelExperience','OnlyBundledMarketplaceCopy','OnlyComputerUseSurface')) {
+  Set-Variable -Name $option -Value $true
+  Assert-Fails { Assert-ComputerUseSurfaceOptions } '*PatchWindowsStoreUpdateFallback requires the full repair mode*'
+  Set-Variable -Name $option -Value $false
+}
+Assert-ComputerUseSurfaceOptions
+$PatchWindowsStoreUpdateFallback = $false
 if ((Patch-ChromePluginWindowsRegistryParsing $workApp) -cne 'patched') { throw 'normal Chrome patch path regressed' }
 Write-Output 'CUA_FAIL_CLOSED_SELECTION_AND_SCOPE_PASSED'
 

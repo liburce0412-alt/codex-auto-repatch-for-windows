@@ -22,7 +22,7 @@ The next default-scope or full repack also adds browser profile import exception
 
 ## Compatibility update
 
-Upstream main is merged through `3253055`, including Desktop `26.924.2738` Fast Mode matching, the Chrome `26.924.22138` header profile, and additional exact-hash Windows 10 screenshot profiles. Previously integrated PRs #68–#73 are now merged upstream; #74–#76 remain excluded. The [earlier integration record](references/upstream-20260926-integration.md) preserves the previous sources and validation limits. A code merge does not establish installation or real Desktop acceptance of the newer version.
+Upstream main is merged through `459ed73`, incorporating the eight commits in PRs #80–#82: an optional official MSIX fallback when Store misses a newer build, Windows 10 sky 0.7.4/0.7.5 capture and unwind metadata support, the Desktop `26.928.2636` Chrome service profile, and Windows PowerShell TOML stdin BOM handling. TOML validation prefers a working Python launcher and retains pre-write checks. The [current merge record](references/upstream-20261001-merge.md) describes validation; the [earlier record](references/upstream-20260926-integration.md) retains older sources. Merging code does not apply these optional patches to the current Desktop installation.
 
 Automatic repair retains its source-version artifact handoff, data backup, CLI fallback and successful-restart history cleanup. Generic manual direct installers instead use upstream's revision-incrementing in-place update. Do not mix these contracts. Updating the skill does not click Desktop's update button.
 

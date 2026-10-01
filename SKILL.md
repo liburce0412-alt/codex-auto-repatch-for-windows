@@ -77,7 +77,7 @@ if (Test-Path -LiteralPath $config -PathType Leaf) {
 }
 ```
 
-Do not proceed with a config write if the backup of an existing config fails. The shared TOML writer uses a basic string when a value contains an apostrophe or control character; doubled apostrophes are not valid TOML escaping. Validate the candidate content before replacing the config when `tomllib` is available, and validate again after the complete repair. A missing parser is a tooling limitation, not evidence of invalid configuration.
+Do not proceed with a config write if the backup of an existing config fails. The shared TOML writer uses a basic string when a value contains an apostrophe or control character; doubled apostrophes are not valid TOML escaping. Validate the candidate content before replacing the config when `tomllib` is available, and validate again after the complete repair. Windows PowerShell 5.1 can prefix native stdin with a UTF-8 BOM even with a no-BOM `$OutputEncoding`; decode validator input with `utf-8-sig` to avoid falsely rejecting valid content. This transport handling does not change the no-BOM file writer or the malformed-TOML rejection. A missing parser is a tooling limitation, not evidence of invalid configuration.
 
 ## Workflow Selection
 
@@ -460,6 +460,8 @@ Fixture success and an installed-package dry run do not establish real Desktop a
 On Windows, the high-level bound `getScreenshot()` can reject a window with `multiple screenshot regions; a single screenshot is unavailable`. Desktop 26.917.9434.0 returned two regions for an Explorer window while the lower-level `cua.computer.get_window_state()` returned both visible screenshots and accessibility state. Inspect the `screenshots[]` regions and the intended window content rather than treating the high-level single-image error as native Computer Use failure. If Sky reports concurrent user input in the window, stop input instead of overriding the user.
 
 ## Useful Wrapper Options
+
+- `-PatchWindowsStoreUpdateFallback`: opt in only when Desktop logs show a newer official manifest but Store reports `NoUpdates`. The supported 26.928 branch then invokes the existing official MSIX fallback instead of reporting up to date. Run a full DryRun first; this option changes Codex's updater, not Windows Store tasks or policy. See [Windows Store download fallback](references/windows-store-update-fallback.md).
 
 - `-DryRun`: verify bundle targets only; no install. Unless `-KeepBuild` is supplied, the wrapper asks the patcher to clean its copied build root after a successful patch stage. Cleanup is best-effort, so inspect the reported path when zero residual data is required; a later wrapper verification can still fail after the patcher has already cleaned its own build root.
 - `-NoLaunch`: install but do not start Codex Desktop.

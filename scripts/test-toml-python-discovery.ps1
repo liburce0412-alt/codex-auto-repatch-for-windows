@@ -39,7 +39,7 @@ try { & {
   function Test-py { Invoke-TestPython 'py' $args }
 
   Test-CodexTomlContent 'enabled = true'
-  Assert (($script:probes -join ',') -eq 'python,python3,py') 'Broken aliases did not fall back to py'
+  Assert (($script:probes -join ',') -eq 'py') 'Working launcher did not bypass Store aliases'
   Assert ($script:warnings.Count -eq 0) 'Working fallback was skipped'
   $script:ready = 'python3'
   Assert ((Resolve-CodexTomlPython).Path -eq 'Test-python3') 'python3 fallback failed'

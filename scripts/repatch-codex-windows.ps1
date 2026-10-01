@@ -10,6 +10,7 @@ param(
   [switch]$SkipMarketplace,
   [switch]$SkipComputerUse,
   [switch]$PatchWindows10ScreenshotHelper,
+  [switch]$PatchWindowsStoreUpdateFallback,
   [switch]$VerifyAllBundledPluginsAvailable,
   [switch]$RegisterMarketplaceOnly,
   [switch]$ForceRebuild,
@@ -497,6 +498,9 @@ if ($PSBoundParameters.ContainsKey('CustomModels')) {
 }
 if ($PatchWindows10ScreenshotHelper) {
   $patchArgs += '-PatchWindows10ScreenshotHelper'
+}
+if ($PatchWindowsStoreUpdateFallback) {
+  $patchArgs += '-PatchWindowsStoreUpdateFallback'
 }
 if ($DryRun) {
   $patchArgs += '-DryRun'

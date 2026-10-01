@@ -401,3 +401,27 @@ This smoke test demonstrates screenshot capture, text input, and coordinate mous
 `EndToEndValidatedDesktopVersion` remains `null` for both profiles. The soak frames were not decoded and visually inspected, and a code editor is not the continuously animating native target that `SKILL.md` requires. No capture ran against the `2AA2A7A9` helper. In that session `list_windows` returned neither a console window nor the running Task Manager, so no animated native target was captured.
 
 When driving the helper outside Desktop, point `CODEX_HOME` at a disposable directory. Run against a real Codex home, the helper rewrote the `notify` hook in `config.toml` to its own executable path and re-serialized the whole file, so a test copy silently replaced the hook that Desktop had configured. Pointed at an empty directory, it created `config.toml`, the goals, logs, memories, queue and state SQLite databases, `installation_id` and `skills` there.
+
+### `@oai/sky 0.7.4` and `0.7.5` callback timeout
+
+These builds already check whether the border property is available. On Windows 10, screenshot requests timed out in the synchronous `FrameArrived` copy path after enumeration and activation succeeded.
+
+| Sky profile | Original SHA-256 | Patched SHA-256 |
+| --- | --- | --- |
+| `0.7.4-219BFB75` | `219BFB756D96BCE3EA6C0FFBEFB690C7FE3682E12117D330F46BC21BD1E2C576` | `FFA903091DA4FA9A8ABC13C632ECBA6529D9908ABA6D3F28A4E369E61F8DA814` |
+| `0.7.4-8010E5ED` | `8010E5ED48DFD9C06B73B564E020ED1CCE5914071A46725C8702360E4C71DD9C` | `057170CDC8F87B005B66BF90AC9E14BB9CA644FAC7621110B1147138DB7C0D19` |
+| `0.7.5-ABDD75DF` | `ABDD75DF576B3CBCC7ED170DE1B4F27A65C81E25768A9B0B46D682FB586FB483` | `13C46D415AC4E69AA0E27F0B9DE3A18057ED16FFBC791E4D3B1DF65935DFFA65` |
+
+The originals have identical ten section headers and raw section bodies. Differences are confined to signing metadata, timestamps and checksums. Each profile independently guards its entire input and output hashes.
+
+The patch redirects the callback to an MTA worker and changes the busy/once branches. A 512-byte RX `.cuw10` section maps certificate-overlay bytes at raw `0x176e00`, RVA `0x17e000`. The invalidated certificate directory is cleared; the outer MSIX must be signed after repacking.
+
+The callback and worker have separate prologs and epilogs. Static `RUNTIME_FUNCTION` entries cover `[0x17e000,0x17e072)` and `[0x17e080,0x17e0b2)`, referencing `UNWIND_INFO` at `0x17e0c0` and `0x17e0c8`. The exception directory and `.pdata` virtual size include both sorted entries. Thirteen guarded regions cover code and PE metadata.
+
+The previous wrapper omitted x64 unwind metadata. Its hashes are intentionally unsupported by this revision. For migration, restore the exact original from a verified backup with the previous patcher, then apply this revision; never relabel the old output as current or bypass the hash guard. A package rebuild can instead start from the verified official package.
+
+All three isolated profile harnesses passed candidate hashes, installation, idempotence, rollback, backup preservation and unknown-input rejection. `test-computer-use-helper-win10-unwind.py` additionally maps each candidate without resolving imports or running its entry point. Windows `RtlLookupFunctionEntry` and `RtlVirtualUnwind` restore RIP, RSP and RBX at 47 instruction boundaries. Real callback success, CreateThread failure, busy and worker executions supply ten live caller frames, checking stack alignment and stack arguments. API/COM stubs exist only in the private test mapping; input files are unchanged. This checks native stack walking, not language-level exception dispatch or a long-duration resource soak.
+
+The revised `0.7.5-ABDD75DF` helper was installed in Desktop package `26.928.1915.3`. The packaged and user-runtime helpers match the complete patched hash. Fresh Desktop CUA calls returned two visually inspected `1104x719` Explorer screenshots in independent calls and accepted F5 input. A coordinate click opened Task Manager's Performance tab; three independent, visually inspected `666x593` frames showed changing CPU charts and advancing uptime. Native unwind validation also passed against the actual user-runtime helper. Only this profile has installed-Desktop validation set; the two `0.7.4` profiles remain unset.
+
+A package revision can retain the same runtime extraction directory and leave its old helper cached. Strict local plugin verification alone did not detect this difference. Compare the complete packaged and runtime helper hashes after deployment; if the runtime is the previous patch, use the verified original-backup rollback and reinstall procedure above before acceptance.

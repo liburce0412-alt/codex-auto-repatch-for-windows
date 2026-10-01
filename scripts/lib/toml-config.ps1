@@ -16,13 +16,14 @@ function ConvertTo-CodexTomlString {
 function Resolve-CodexTomlPython {
   # A Windows App Execution Alias can exist without a working interpreter.
   # Probe the parser before passing any configuration to the process.
-  foreach ($name in @('python', 'python3', 'py')) {
+  # Prefer the Python launcher over Store aliases, which can wait for installation.
+  foreach ($name in @('py', 'python', 'python3')) {
     $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { continue }
     $arguments = @()
     if ($name -eq 'py') { $arguments = @('-3') }
     try {
-      $probe = & $command.Source @arguments -c 'import tomllib; print("CODEX_TOMLLIB_READY")' 2>$null
+      $probe = & $command.Source @arguments -c "import tomllib; print('CODEX_TOMLLIB_READY')" 2>$null
       if ($LASTEXITCODE -eq 0 -and $probe -contains 'CODEX_TOMLLIB_READY') {
         return [pscustomobject]@{ Path = $command.Source; Arguments = $arguments }
       }
@@ -46,7 +47,8 @@ function Test-CodexTomlContent {
 import sys
 import tomllib
 try:
-    tomllib.loads(sys.stdin.buffer.read().decode('utf-8'))
+    # Windows PowerShell 5.1 can prefix native stdin with a UTF-8 BOM.
+    tomllib.loads(sys.stdin.buffer.read().decode('utf-8-sig'))
 except (ValueError, UnicodeError):
     sys.exit(86)
 '@
