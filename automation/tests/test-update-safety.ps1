@@ -34,11 +34,16 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   function Restore-PreparedPackageData { }
   function Write-InstallHandoffState { }
   function Write-CycleLog { }
+  function Assert-CodexMachineSigningTrust { }
   $installed=Install-PreparedCodexPackage @{}
   Assert ($installed.SignatureKind -eq 'Developer' -and $script:sideEffects -eq 3) 'optional recovery still blocked valid installation'
   $script:sideEffects=0; $script:signature='Store'; $script:badPatch=$true
   Assert-Throws { Install-PreparedCodexPackage @{} } 'invalid patched artifact'
   Assert ($script:sideEffects -eq 0) 'invalid patched artifact caused side effects'
+  $script:badPatch=$false
+  function Assert-CodexMachineSigningTrust { throw 'certificate trust cancelled' }
+  Assert-Throws { Install-PreparedCodexPackage @{} } 'certificate trust cancelled'
+  Assert ($script:sideEffects -eq 0) 'certificate trust failure stopped or removed the installed app'
 }
 
 & {
@@ -91,6 +96,40 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
 }
 
 & {
+  . (Import-WatcherFunction 'Test-VerifiedPatchedRecovery')
+  $AuthorizationId='fixture-authorization'
+  $authorizationLastPath='fixture-authorization.json'
+  $StableRestartSeconds=20
+  $script:authorizationMatches=$true
+  $script:finalizationPassed=$true
+  $script:exactPackage=$true
+  $script:signature='Developer'
+  $script:ready=$true
+  $script:created=[DateTimeOffset]::UtcNow.AddMinutes(-1)
+  function Read-RepairAuthorization { param($Path) @{authorization_id=if($script:authorizationMatches){$AuthorizationId}else{'other'};consumed_at=[DateTimeOffset]::UtcNow.ToString('o')} }
+  function Get-VerifiedRepairState { param($ConsumedAt) if(-not $script:finalizationPassed){throw 'finalization unverified'} }
+  function Get-CodexPackage { @{SignatureKind=$script:signature} }
+  function Test-ExpectedPackage { param($Package) $script:exactPackage }
+  function Test-CompletePackage { param($Package) $true }
+  function Get-CodexMainProcess { param($Package) @{ProcessId=42} }
+  function Test-CodexMainWindowReady { param($Process) $script:ready }
+  function Get-ProcessCreationInstant { param($Process) $script:created }
+  Assert (Test-VerifiedPatchedRecovery) 'verified exact stable recovery was rejected'
+  $script:finalizationPassed=$false
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'unverified finalization suppressed CLI'
+  $script:finalizationPassed=$true; $script:authorizationMatches=$false
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'different authorization suppressed CLI'
+  $script:authorizationMatches=$true; $script:exactPackage=$false
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'different package suppressed CLI'
+  $script:exactPackage=$true; $script:signature='Store'
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'Store package suppressed CLI'
+  $script:signature='Developer'; $script:ready=$false
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'unresponsive window suppressed CLI'
+  $script:ready=$true; $script:created=[DateTimeOffset]::UtcNow
+  Assert (-not (Test-VerifiedPatchedRecovery)) 'unstable window suppressed CLI'
+}
+
+& {
   . (Import-WatcherFunction 'Open-CliAfterRepairFailure')
   $automationRoot=$testRoot
   $installHandoffPath=Join-Path $testRoot 'absent-handoff.json'
@@ -105,6 +144,7 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   function Invoke-AddCodexAppxPackage { throw 'fallback must never deploy an app' }
   function Write-CycleState { param($Status,$Details) $script:stage=$Status }
   function Write-CycleLog { }
+  function Test-VerifiedPatchedRecovery { return $false }
   Assert (Open-CliAfterRepairFailure 'fixture') 'CLI fallback failed'
   Assert ($script:stage -eq 'repair-failed-cli-opened') 'fallback status wrong'
   Assert (Open-CliAfterRepairFailure 'repeat') 'repeat fallback failed'
@@ -112,6 +152,15 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   $script:cliFallbackOpened=$false; $script:failLaunch=$true
   Assert (-not (Open-CliAfterRepairFailure 'fixture')) 'CLI failure incorrectly succeeded'
   Assert ($script:stage -eq 'cli-fallback-failed') 'CLI launch failure missing'
+  $script:cliFallbackOpened=$false; $script:launches=0
+  $disabledPath = Join-Path $automationRoot 'disable-cli-fallback'
+  [IO.File]::WriteAllText($disabledPath, 'user preference')
+  Assert (-not (Open-CliAfterRepairFailure 'disabled')) 'disabled fallback incorrectly reported recovery'
+  Assert ($script:launches -eq 0 -and $script:stage -eq 'repair-failed-cli-disabled') 'disabled fallback opened CLI or hid failure'
+  function Test-VerifiedPatchedRecovery { return $true }
+  Assert (Open-CliAfterRepairFailure 'recovered') 'verified patched recovery was rejected'
+  Assert ($script:launches -eq 0 -and $script:stage -eq 'repair-restart-stable') 'verified patched recovery opened CLI'
+  Remove-Item -LiteralPath $disabledPath
 }
 . (Join-Path $automation 'codex-update-cleanup.ps1')
 $requestRoot = Join-Path $testRoot 'cleanup'

@@ -29,6 +29,10 @@ does not cancel the worker. Results remain visible until Enter is pressed.
 
 ## CLI fallback (user choice, 2026-09-24)
 
+On 2026-10-02 the user disabled automatic CLI launch. The local `automation/disable-cli-fallback` marker now records that preference. With it present, failures remain failures, recovery artifacts and logs are retained, and no CLI terminal is launched. This overrides the earlier default below without changing installation or recovery verification. Missing current CUA runtimes are restored directly from the installed package using content streams, per-file length/SHA-256 checks and atomic publication; partial Desktop extraction is preserved rather than waited on for twenty minutes.
+
+On 2026-10-01 the user requested reusable signer trust and no CLI after a verified patched recovery. The signer selector reads X509EnhancedKeyUsageExtension directly; X509Store certificates do not carry the PowerShell certificate-provider EnhancedKeyUsageList property. This fixes repeated creation of a new key. The installer verifies LocalMachine TrustedPeople before stopping or removing Desktop, importing only the validated artifact's public signer certificate through one same-user UAC request when needed. An existing trust entry needs no prompt. CLI suppression requires the exact healthy Developer package, this authorization's successful finalization record and a stable responsive window; retaining an artifact or merely registering Developer does not satisfy that gate. No earlier-version automatic rollback is added.
+
 The user cancelled mandatory recovery media and explicitly chose CLI fallback.
 The watcher may optionally retain
 `store-recovery\<exact-version>\original.msix` under the automation directory.

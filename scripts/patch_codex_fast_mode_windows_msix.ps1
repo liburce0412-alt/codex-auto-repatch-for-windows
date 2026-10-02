@@ -3100,13 +3100,13 @@ function Get-ManifestPublisher {
 function Test-CodeSigningCertificate {
   param([object]$Certificate)
   $codeSigningOid = '1.3.6.1.5.5.7.3.3'
-  foreach ($usage in @($Certificate.EnhancedKeyUsageList)) {
-    $objectId = [string]$usage.ObjectId
-    if ([string]::IsNullOrWhiteSpace($objectId)) {
-      $objectId = [string]$usage.ObjectId.Value
-    }
-    if ($objectId -eq $codeSigningOid) {
-      return $true
+  foreach ($extension in @($Certificate.Extensions)) {
+    if ($extension -is [Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]) {
+      foreach ($usage in $extension.EnhancedKeyUsages) {
+        if ($usage.Value -eq $codeSigningOid) {
+          return $true
+        }
+      }
     }
   }
   return $false
@@ -3123,6 +3123,7 @@ function Get-OrCreateSigningCertificate {
       Where-Object {
         $_.Subject -eq $Publisher -and
         $_.HasPrivateKey -and
+        $_.NotBefore -le (Get-Date) -and
         $_.NotAfter -gt (Get-Date) -and
         (Test-CodeSigningCertificate $_)
       } |

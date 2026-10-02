@@ -836,6 +836,59 @@ function Stop-CodexDesktopPackageProcesses {
   return $true
 }
 
+function Restore-PackagedCuaRuntime {
+  param([Parameter(Mandatory)][object]$Package)
+
+  $sourceRoot = Join-Path $Package.InstallLocation 'app\resources\cua_node'
+  $managedRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node'
+  [void][IO.Directory]::CreateDirectory($managedRoot)
+  if (((Get-Item -LiteralPath $managedRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'Runtime destination must not be a reparse point'
+  }
+  $items = @(Get-ChildItem -LiteralPath $sourceRoot -Force -Recurse -ErrorAction Stop)
+  if (@($items | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }).Count) {
+    throw 'Packaged runtime contains an unexpected reparse point'
+  }
+  $files = @($items | Where-Object { -not $_.PSIsContainer })
+  foreach ($required in @('manifest.json', 'bin\node.exe', 'bin\node_repl.exe')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $required) -PathType Leaf)) {
+      throw "Packaged runtime is incomplete: $required"
+    }
+  }
+  $recoveryId = [guid]::NewGuid().ToString('N')
+  $stagingRoot = Join-Path $managedRoot ('.staging-repair-' + $recoveryId)
+  $destinationRoot = Join-Path $managedRoot ('recovered-' + $recoveryId)
+  [void][IO.Directory]::CreateDirectory($stagingRoot)
+  $completed = 0
+  Write-RepairLog "restoring the current packaged CUA runtime directly: files=$($files.Count)"
+  foreach ($file in $files) {
+    $relative = [IO.Path]::GetRelativePath($sourceRoot, $file.FullName)
+    if ([IO.Path]::IsPathRooted($relative) -or $relative.StartsWith('..')) { throw 'Runtime source escapes package root' }
+    $target = Join-Path $stagingRoot $relative
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+    $sourceHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+    $inputStream = [IO.File]::Open($file.FullName, 'Open', 'Read', 'Read')
+    try {
+      $outputStream = [IO.File]::Open($target, 'CreateNew', 'Write', 'None')
+      try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+    } finally { $inputStream.Dispose() }
+    if ((Get-Item -LiteralPath $target).Length -ne $file.Length -or
+        (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $sourceHash) {
+      throw "Runtime content verification failed: $relative"
+    }
+    $completed++
+    if ($completed % 400 -eq 0) { Write-RepairLog "verified packaged runtime files: $completed/$($files.Count)" }
+  }
+  if ([string](Get-CodexPackage).PackageFullName -ne [string]$Package.PackageFullName) {
+    throw 'Installed package changed during runtime recovery'
+  }
+  if (@(Get-ChildItem -LiteralPath $stagingRoot -File -Force -Recurse).Count -ne $files.Count) {
+    throw 'Recovered runtime inventory mismatch'
+  }
+  [IO.Directory]::Move($stagingRoot, $destinationRoot)
+  Write-RepairLog "published complete verified packaged runtime: files=$completed root=$destinationRoot"
+}
+
 function Wait-ForCurrentCuaRuntime {
   param(
     [object]$Package,
@@ -852,37 +905,10 @@ function Wait-ForCurrentCuaRuntime {
     return $null
   }
 
-  if (-not (Test-CurrentCodexMainProcess -Package $Package)) {
-    Start-CodexDesktop
-  } else {
-    Write-RepairLog 'Codex Desktop is already extracting the current CUA runtime; preserving its progress'
-  }
-
-  $startedAt = [DateTime]::UtcNow
-  $deadline = $startedAt.AddSeconds($TimeoutSeconds)
-  $nextProgressLog = $startedAt
-  while ([DateTime]::UtcNow -lt $deadline) {
-    $runtime = Get-MatchingCurrentCuaRuntime -Package $Package
-    if ($runtime) {
-      $elapsed = [Math]::Round(([DateTime]::UtcNow - $startedAt).TotalSeconds)
-      Write-RepairLog "current CUA runtime is ready after ${elapsed}s: $($runtime.Root)"
-      return $runtime
-    }
-
-    if ([DateTime]::UtcNow -ge $nextProgressLog) {
-      $localCuaRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node'
-      $stagingNames = @(
-        Get-ChildItem -LiteralPath $localCuaRoot -Directory -Filter '.staging-*' -ErrorAction SilentlyContinue |
-          Select-Object -ExpandProperty Name
-      )
-      $stagingText = if ($stagingNames.Count -gt 0) { $stagingNames -join ',' } else { '<not-started>' }
-      Write-RepairLog "waiting for Codex Desktop CUA runtime extraction: staging=$stagingText"
-      $nextProgressLog = [DateTime]::UtcNow.AddSeconds(30)
-    }
-    Start-Sleep -Seconds 5
-  }
-
-  throw "timed out after $TimeoutSeconds seconds waiting for Codex Desktop to extract the current CUA runtime"
+  Restore-PackagedCuaRuntime -Package $Package
+  $runtime = Get-MatchingCurrentCuaRuntime -Package $Package
+  if (-not $runtime) { throw 'Recovered packaged CUA runtime did not pass current-package validation' }
+  return $runtime
 }
 
 function Save-PendingCuaRuntimeState {

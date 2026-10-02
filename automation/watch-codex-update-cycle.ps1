@@ -296,7 +296,8 @@ function Write-CycleState {
     'repair-restart-stable'='更新与重补丁完成，启动检查通过'; 'store-preserved'='补丁未应用：已保留商店版'
     'store-restored'='补丁失败：已恢复官方商店版'; 'failed-prepare'='补丁准备失败，保留商店版'
     'store-recovery-failed'='恢复未成功，已保留恢复包和日志，需要处理'
-    'failed-install'='补丁安装失败，准备打开 Codex CLI'; 'failed-finalize'='补丁完成检查失败，准备打开 Codex CLI'
+    'failed-install'='补丁安装失败，保留恢复包和日志'; 'failed-finalize'='补丁完成检查失败，保留恢复包和日志'
+    'repair-failed-cli-disabled'='重补丁未完成；已按设置关闭自动 CLI，保留恢复包和日志'
     'repair-failed-cli-opened'='重补丁未完成，已打开 Codex CLI 备用终端'; 'cli-fallback-failed'='重补丁失败，CLI 终端未能打开，请查看日志'
   }
   $stageText = if ($stageNames.ContainsKey($Status)) { $stageNames[$Status] } else { $Status }
@@ -1196,9 +1197,93 @@ function Save-StoreRecoveryArtifact {
   return $true
 }
 
+function Test-VerifiedPatchedRecovery {
+  try {
+    $authorization = Read-RepairAuthorization -Path $authorizationLastPath
+    if ([string]$authorization.authorization_id -ne $AuthorizationId) { return $false }
+    [void](Get-VerifiedRepairState -ConsumedAt ([DateTimeOffset]::Parse([string]$authorization.consumed_at)))
+    $package = Get-CodexPackage
+    if (-not (Test-ExpectedPackage -Package $package) -or
+        -not (Test-CompletePackage -Package $package) -or
+        [string]$package.SignatureKind -ne 'Developer') { return $false }
+    $main = Get-CodexMainProcess -Package $package
+    if (-not (Test-CodexMainWindowReady -Process $main)) { return $false }
+    return (Get-ProcessCreationInstant -Process $main) -le [DateTimeOffset]::UtcNow.AddSeconds(-$StableRestartSeconds)
+  } catch { return $false }
+}
+
+function Test-CodexMachineSigningTrust {
+  param([Parameter(Mandatory)][string]$Thumbprint)
+  $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPeople', 'LocalMachine')
+  try {
+    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    return @($store.Certificates | Where-Object Thumbprint -EQ $Thumbprint).Count -gt 0
+  } finally { $store.Dispose() }
+}
+
+function Assert-CodexMachineSigningTrust {
+  param([Parameter(Mandatory)][object]$Prepared)
+  $thumbprint = [string]$Prepared.Signature.SignerCertificate.Thumbprint
+  if (Test-CodexMachineSigningTrust -Thumbprint $thumbprint) {
+    Write-CycleLog "prepared signer is already trusted in LocalMachine TrustedPeople: $thumbprint"
+    return
+  }
+  $request = @{
+    path = $Prepared.ArtifactPath
+    hash = $Prepared.ArtifactSha256
+    thumbprint = $thumbprint
+    user_sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  } | ConvertTo-Json -Compress
+  $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
+  $command = @'
+$ErrorActionPreference = 'Stop'
+try {
+  $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PAYLOAD__')) | ConvertFrom-Json
+  if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $request.user_sid) { throw 'Administrator must be the same Windows user' }
+  $stream = [IO.File]::Open($request.path, 'Open', 'Read', 'Read')
+  try {
+    if ((Get-FileHash -InputStream $stream -Algorithm SHA256).Hash -ne $request.hash) { throw 'Prepared package hash changed' }
+    $signature = Get-AuthenticodeSignature -LiteralPath $request.path
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $request.thumbprint) { throw 'Prepared package signature changed' }
+    $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($signature.SignerCertificate.RawData)
+    $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPeople', 'LocalMachine')
+    try {
+      $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+      if (-not @($store.Certificates | Where-Object Thumbprint -EQ $request.thumbprint).Count) { $store.Add($publicCertificate) }
+    } finally { $store.Dispose(); $publicCertificate.Dispose() }
+  } finally { $stream.Dispose() }
+  exit 0
+} catch { exit 1 }
+'@
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command.Replace('__PAYLOAD__', $payload)))
+  Write-CycleLog 'requesting one-time UAC to trust only the validated package signer before any app shutdown or removal'
+  $process = Start-Process -FilePath $RepairPwshPath -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -Verb RunAs -WindowStyle Hidden -PassThru -ErrorAction Stop
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0 -or -not (Test-CodexMachineSigningTrust -Thumbprint $thumbprint)) {
+    throw 'Validated signer could not be trusted; installed Codex is preserved'
+  }
+}
+
 function Open-CliAfterRepairFailure {
   param([string]$Reason)
   if ($script:cliFallbackOpened) { return $true }
+  if (Test-VerifiedPatchedRecovery) {
+    Write-CycleLog "verified exact patched Desktop is available after $Reason; no CLI terminal needed"
+    Write-CycleState -Status 'repair-restart-stable' -Details @{
+      recovery_action='verified-patched-recovery'; repair_warning=$Reason;
+      cli_fallback='not-needed'; cleanup='retained-for-diagnosis'
+    }
+    return $true
+  }
+  if (Test-Path -LiteralPath (Join-Path $automationRoot 'disable-cli-fallback') -PathType Leaf) {
+    $details = @{ repair_failure=$Reason; cli_fallback='disabled-by-user'; cleanup='retained-for-diagnosis' }
+    Write-CycleState -Status 'repair-failed-cli-disabled' -Details $details
+    if (Test-Path -LiteralPath $installHandoffPath -PathType Leaf) {
+      [void](Write-InstallHandoffState -Status 'repair-failed-cli-disabled' -Details $details)
+    }
+    Write-CycleLog "repair failed: $Reason; automatic CLI launch is disabled by the user; recovery artifacts retained"
+    return $false
+  }
   try {
     . (Join-Path $automationRoot 'start-codex-cli-fallback.ps1')
     $terminal = Start-CodexCliFallbackTerminal -PwshPath $RepairPwshPath -Reason $Reason -LogPath $logPath
@@ -1271,6 +1356,7 @@ function Install-PreparedCodexPackage {
   param([Parameter(Mandatory)][object]$Authorization)
 
   $prepared = Assert-PreparedInstallHandoff -Authorization $Authorization
+  Assert-CodexMachineSigningTrust -Prepared $prepared
   . (Join-Path $automationRoot 'start-codex-cli-fallback.ps1')
   [void](Get-VerifiedFallbackCli)
   $currentPackage = Get-CodexPackage
