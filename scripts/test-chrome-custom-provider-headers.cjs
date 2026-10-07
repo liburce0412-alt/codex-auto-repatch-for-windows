@@ -18,6 +18,15 @@ const equal = (actual, expected, label) => { assert.deepEqual(actual, expected, 
 const throws = (action, pattern) => { assert.throws(action, pattern); checks++; };
 equal(plan.state, 'original', 'fixture is the unmodified supported package');
 equal(plan.originalSha256, profile.originalSha256, 'profile is selected by the complete source hash');
+if (profile.id === '26.930.21537') {
+  equal(plan.patchedSha256, 'b4a6fd7e3eece5bef3f255a43064c52910bdaeb995f084e52c522fe08b5ce529', 'Desktop 26.930 plugin produces the reviewed overlay bytes');
+}
+if (profile.id === '26.930.31730') {
+  equal(plan.patchedSha256, '17dba7729c8d48bf3fbad01ba0d7ab883a7d6ee99636210c243b6f2a732bd573', 'Desktop 26.930.31730 plugin produces the reviewed overlay bytes');
+}
+if (profile.id === '26.930.41038') {
+  equal(plan.patchedSha256, '531a4a8cdf81bdbd9c424393154dba6e01ca878d87dc2815b2ecd06102ab695d', 'Desktop 26.930.41038 plugin produces the reviewed overlay bytes');
+}
 if (profile.id === '26.917.71314') {
   equal(plan.patchedSha256, '8886deea23c8ececd5156c2ee4300431307bda9b5e8910f8d82b5241cf4f38da', 'accepted live patch bytes remain unchanged');
 }

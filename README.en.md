@@ -26,7 +26,9 @@ The next default-scope or full repack also adds browser profile import exception
 
 ## Compatibility update
 
-Upstream main is merged through `459ed73`, incorporating the eight commits in PRs #80–#82: an optional official MSIX fallback when Store misses a newer build, Windows 10 sky 0.7.4/0.7.5 capture and unwind metadata support, the Desktop `26.928.2636` Chrome service profile, and Windows PowerShell TOML stdin BOM handling. TOML validation prefers a working Python launcher and retains pre-write checks. The [current merge record](references/upstream-20261001-merge.md) describes validation; the [earlier record](references/upstream-20260926-integration.md) retains older sources. Merging code does not apply these optional patches to the current Desktop installation.
+The 2026-10-07 merge reaches upstream `2a4a19b` and incorporates six commits: exact Desktop 26.930 Chrome and Win10 helper profiles, browser accessibility asset and Unicode-path fixes, complete proxy-environment diagnostics, and background read-only verification by default. Existing fork profiles and automation remain; the new proxy modes reject combinations with the automatic repair mode. The final upstream revert is honored, so artifact retirement is not introduced. The [current merge record](references/upstream-20261007-merge.md) lists commits, conflict resolutions and verification boundaries.
+
+The earlier merge through `459ed73` incorporated the eight commits in PRs #80–#82: an optional official MSIX fallback when Store misses a newer build, Windows 10 sky 0.7.4/0.7.5 capture and unwind metadata support, the Desktop `26.928.2636` Chrome service profile, and Windows PowerShell TOML stdin BOM handling. TOML validation prefers a working Python launcher and retains pre-write checks. The [previous merge record](references/upstream-20261001-merge.md) describes validation; the [earlier record](references/upstream-20260926-integration.md) retains older sources. Merging code does not apply these optional patches to the current Desktop installation.
 
 Pinned commits from open PRs #83–#85 are also integrated. Both `26.928.2636` and `26.928.3736` Win10 helper profiles are retained, while the identical `26.928.31416` Chrome profile and regression assertion are included once. Local cache repair, strict verification, and real Chrome navigation, Chinese input, clicks and accessibility reads pass on `26.928.2636.0`. The 3736 profiles have not been installed or accepted locally; the Win10 patch remains guarded against Windows 11 installation. The [PR integration and local verification record](references/upstream-20261001-open-prs.md) separates source support, isolated regressions and live operations.
 
@@ -53,6 +55,8 @@ pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1 -EnableAutomat
 ```
 
 The existing directory name is required for skill/path compatibility. `-EnableAutomation` grants continuing, current-user authorization and registers `Codex Desktop Post-Update Repair`. Future Store updates may close and repair Desktop automatically. Setup backs up old scripts and verifies the independent CLI; it does not immediately repatch Desktop.
+
+Verification defaults to background read-only checks. It does not automatically open Calculator or another test app, change native-window focus, or inject mouse/keyboard input. Runtime, plugin, and window-enumeration results are reported separately. Live native screenshot/input tests run only when explicitly requested or authorized, and untested operations are identified as such.
 
 After explicitly updating the repository and reviewing changes, redeploy scripts while preserving current authorization:
 

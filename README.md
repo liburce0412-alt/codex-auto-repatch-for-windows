@@ -24,7 +24,9 @@ Windows 商店更新 Codex Desktop 后，自动重新应用已适配的本地补
 
 ## 本次兼容更新
 
-已合并上游主分支至 `459ed73`，纳入 #80～#82 的 8 个提交：商店漏报新版本时的可选官方 MSIX 下载回退、Win10 sky 0.7.4/0.7.5 截图及展开元数据适配、Desktop `26.928.2636` Chrome 服务配置，以及 Windows PowerShell TOML 输入 BOM 处理。TOML 校验优先使用可工作的 Python 启动器，保留写入前验证。[本次合并记录](references/upstream-20261001-merge.md)说明验证范围；[此前记录](references/upstream-20260926-integration.md)保留旧版本来源。代码合并不代表这些可选补丁已应用到当前 Desktop。
+2026-10-07 合并上游至 `2a4a19b`，补齐 6 个提交：新增 Desktop 26.930 Chrome 和 Win10 helper 精确哈希适配，修复浏览器无障碍资源缺失、中文路径和代理环境诊断漏检，并将常规验收改为后台只读检查。保留 fork 的既有适配和自动化流程，新代理模式禁止与自动修复模式混用；遵循上游最终撤回，未引入产物归档功能。[本次合并记录](references/upstream-20261007-merge.md)列出提交、冲突处理和验证边界。
+
+此前合并上游至 `459ed73`，纳入 #80～#82 的 8 个提交：商店漏报新版本时的可选官方 MSIX 下载回退、Win10 sky 0.7.4/0.7.5 截图及展开元数据适配、Desktop `26.928.2636` Chrome 服务配置，以及 Windows PowerShell TOML 输入 BOM 处理。TOML 校验优先使用可工作的 Python 启动器，保留写入前验证。[此前合并记录](references/upstream-20261001-merge.md)说明验证范围；[更早记录](references/upstream-20260926-integration.md)保留旧版本来源。代码合并不代表这些可选补丁已应用到当前 Desktop。
 
 另合入开放 PR #83～#85 的固定提交，保留 `26.928.2636` 与 `26.928.3736` 的独立 Win10 helper 档位，并将两份相同的 `26.928.31416` Chrome 适配去重。当前 `26.928.2636.0` 的本地缓存修复、严格检查，以及 Chrome 导航、中文输入、点击和无障碍读取通过；3736 档位尚未在本机安装验收，Win10 补丁不会应用到 Win11。[PR 合并与本机验证记录](references/upstream-20261001-open-prs.md)区分源码兼容、隔离回归和真实操作。
 
@@ -57,6 +59,8 @@ pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1 -EnableAutomat
 ## 使用与维护
 
 更新 Codex 后，任务会检查商店版本；识别到适配目标才进入准备、安装及验证。实时进度终端会显示日志，安装需要权限时可能出现仅针对已验证 MSIX 的 UAC 提示。
+
+默认采用后台只读验收，不自动打开计算器等测试应用，不切换原生窗口焦点或发送鼠标键盘输入。运行时、插件、窗口枚举等检查会分别报告；真实截图和原生输入测试仅在你明确要求或同意后执行，未执行时会如实注明。
 
 查看状态：
 
