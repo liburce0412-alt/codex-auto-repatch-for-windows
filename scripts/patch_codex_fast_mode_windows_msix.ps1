@@ -863,6 +863,14 @@ if (text.includes(marker)) {
 
 const visibilityPatterns = [
   {
+    // Desktop 26.1002 adds API-key access-program checks. Keep the denial
+    // branch outside the local visibility override.
+    re: /return (([$A-Za-z_][$\w]*)===`apikey`&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!=null&&\4\.length>0&&!\4\.includes\(`standard`\)\?!1:)([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\6\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!\6\.hidden\|\|\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&\2!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\6\.model\)\|\|\2===`apikey`&&\3&&!\6\.hidden&&\4\?\.some\(([$A-Za-z_][$\w]*)=>\11!==`standard`\)===!0:!\6\.hidden\)\)\}/,
+    modelGroup: 6,
+    accessGuardGroup: 1,
+    isReturn: true,
+  },
+  {
     re: /return ([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\2\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\}/,
     modelGroup: 2,
     isReturn: true,
@@ -895,7 +903,7 @@ const visibilityPatterns = [
   },
 ];
 const target = visibilityPatterns
-  .map(({ re, modelGroup, isReturn }) => ({ match: text.match(re), modelGroup, isReturn }))
+  .map(({ re, modelGroup, isReturn, accessGuardGroup }) => ({ match: text.match(re), modelGroup, isReturn, accessGuardGroup }))
   .find(({ match }) => match != null);
 const match = target?.match;
 if (!match) {
@@ -907,8 +915,9 @@ const forced = JSON.stringify(models);
 const modelVar = match[target.modelGroup];
 let replacement;
 if (target.isReturn) {
-  const originalCondition = match[0].slice('return '.length, -1);
-  replacement = `return/*${marker}*/${forced}.includes(${modelVar}.model)||(${originalCondition})}`;
+  const accessGuard = target.accessGuardGroup ? match[target.accessGuardGroup] : '';
+  const originalCondition = match[0].slice('return '.length + accessGuard.length, -1);
+  replacement = `return ${accessGuard}/*${marker}*/${forced}.includes(${modelVar}.model)||(${originalCondition})}`;
 } else {
   const originalCondition = match[0].slice(3, -2);
   replacement = `if(/*${marker}*/${forced}.includes(${modelVar}.model)||(${originalCondition})){`;
@@ -1989,6 +1998,7 @@ function Test-CustomModelVisibilityExpression {
 
   # Keep target discovery aligned with the embedded Node patcher's supported predicate shapes.
   $patterns = @(
+    'return (([$A-Za-z_][$\w]*)===`apikey`&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!=null&&\4\.length>0&&!\4\.includes\(`standard`\)\?!1:)([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\6\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!\6\.hidden\|\|\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&\2!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\6\.model\)\|\|\2===`apikey`&&\3&&!\6\.hidden&&\4\?\.some\(([$A-Za-z_][$\w]*)=>\11!==`standard`\)===!0:!\6\.hidden\)\)\}',
     'if\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\((?<model>[$A-Za-z_][$\w]*)\.model\):!\k<model>\.hidden\)\{',
     'if\([$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\{',
     '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)',

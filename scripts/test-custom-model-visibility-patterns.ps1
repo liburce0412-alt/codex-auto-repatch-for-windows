@@ -83,6 +83,10 @@ $positiveFixtures = @(
   [pscustomobject]@{
     Name = 'codex-26-825-configured-catalog-return'
     Source = 'function $ii({additionalAvailableModels:e,authMethod:t,availableModels:n,hasConfiguredModelCatalog:r,isCustomModelProvider:i,model:a,useHiddenModels:o}){return e?.has(a.model)===!0||a.model!==`codex-auto-review`&&(r&&!a.hidden||(o&&!i&&t!==`amazonBedrock`?n.has(a.model):!a.hidden))}'
+  },
+  [pscustomobject]@{
+    Name = 'codex-26-1002-access-program-return'
+    Source = 'function visible({additionalAvailableModels:e,apiKeyDaybreakSupported:t,authMethod:n,availableModels:r,hasConfiguredModelCatalog:i,isCustomModelProvider:a,model:o,useHiddenModels:s}){let c=o.availableAccessPrograms?.cyber;return n===`apikey`&&!t&&c!=null&&c.length>0&&!c.includes(`standard`)?!1:e?.has(o.model)===!0||o.model!==`codex-auto-review`&&(i&&!o.hidden||(s&&!a&&n!==`amazonBedrock`?r.has(o.model)||n===`apikey`&&t&&!o.hidden&&c?.some(e=>e!==`standard`)===!0:!o.hidden))}'
   }
 )
 $negativeFixture = [pscustomobject]@{
@@ -202,6 +206,49 @@ assert.equal(c.visible(true, new Set(), {model:'gpt-6-astra,gpt-6-sol', hidden:t
   foreach ($source in @('/*CODEX_CUSTOM_MODELS_V1*/', ([IO.File]::ReadAllText($csv.AssetPath) + '/*CODEX_CUSTOM_MODELS_V1*/'))) {
     $rejected = Invoke-NodePatcherFixture -Name ('ambiguous-' + [guid]::NewGuid().ToString('N')) -Source $source -ExpectedExitCode 2
     if ([IO.File]::ReadAllText($rejected.AssetPath) -cne $source) { throw 'ambiguous existing model patch was changed' }
+  }
+  $accessFixture = $positiveFixtures | Where-Object Name -eq 'codex-26-1002-access-program-return'
+  $originalAccessPath = Join-Path $fixtureRoot 'access-program-original.js'
+  [IO.File]::WriteAllText($originalAccessPath, $accessFixture.Source, [Text.UTF8Encoding]::new($false))
+  $accessBehaviorPath = Join-Path $fixtureRoot 'access-program-behavior.cjs'
+  [IO.File]::WriteAllText($accessBehaviorPath, @'
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const original = vm.createContext({}), patched = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), original);
+vm.runInContext(fs.readFileSync(process.argv[3], 'utf8'), patched);
+let cases = 0;
+for (const authMethod of ['apikey', 'chatgpt', 'amazonBedrock'])
+for (const apiKeyDaybreakSupported of [false, true])
+for (const programs of [undefined, [], ['standard'], ['restricted'], ['standard', 'restricted']])
+for (const hidden of [false, true])
+for (const hasConfiguredModelCatalog of [false, true])
+for (const isCustomModelProvider of [false, true])
+for (const useHiddenModels of [false, true])
+for (const available of [false, true])
+for (const additional of [false, true])
+for (const id of ['gpt-6-astra', 'unrelated', 'codex-auto-review']) {
+  const input = {authMethod, apiKeyDaybreakSupported, hasConfiguredModelCatalog,
+    isCustomModelProvider, useHiddenModels,
+    model: {model:id, hidden, availableAccessPrograms: {cyber:programs}},
+    availableModels: new Set(available ? [id] : []),
+    additionalAvailableModels: additional ? new Set([id]) : undefined};
+  const denied = authMethod === 'apikey' && !apiKeyDaybreakSupported &&
+    programs != null && programs.length > 0 && !programs.includes('standard');
+  const expected = denied ? false : id === 'gpt-6-astra' || original.visible(input);
+  assert.equal(patched.visible(input), expected, JSON.stringify(input));
+  cases++;
+}
+console.log(`ACCESS_PROGRAM_BEHAVIOR_PASSED cases=${cases}`);
+'@, [Text.UTF8Encoding]::new($false))
+  & $node.Source $accessBehaviorPath $originalAccessPath (Join-Path $fixtureRoot ($accessFixture.Name + '.js'))
+  if ($LASTEXITCODE -ne 0) { throw 'access-program guard or original model filtering changed' }
+  foreach ($source in @(
+    $accessFixture.Source.Replace('c?.some', 'other?.some'),
+    $accessFixture.Source.Replace('r.has(o.model)', 'r.has(other.model)')
+  )) {
+    if (Test-CustomModelVisibilityExpression -Text $source) { throw 'mismatched access-program variables were accepted' }
+    $rejected = Invoke-NodePatcherFixture -Name ('access-mismatch-' + [guid]::NewGuid().ToString('N')) -Source $source -ExpectedExitCode 2
+    if ([IO.File]::ReadAllText($rejected.AssetPath) -cne $source) { throw 'unsupported access-program source was changed' }
   }
   Write-Output 'CUSTOM_MODEL_CSV_UPDATE_AND_BEHAVIOR_PASSED'
 } finally {
