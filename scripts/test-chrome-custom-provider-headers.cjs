@@ -18,6 +18,12 @@ const equal = (actual, expected, label) => { assert.deepEqual(actual, expected, 
 const throws = (action, pattern) => { assert.throws(action, pattern); checks++; };
 equal(plan.state, 'original', 'fixture is the unmodified supported package');
 equal(plan.originalSha256, profile.originalSha256, 'profile is selected by the complete source hash');
+if (profile.id === '26.1002.52244') {
+  equal(plan.patchedSha256, '20a28cd3e53bb6a67f91d52630055aa4b39928872aa383bbc21f05944da1b659', 'Desktop 26.1002 plugin produces the reviewed overlay bytes');
+}
+if (profile.id === 'browser-desktop-0.1.1-9c7fb0d8') {
+  equal(plan.patchedSha256, '8612c2dbbfc995dadcc138e62c8c3b9f17930e6fd9fe6a89d4cbe587ee3d987b', 'Desktop 26.1002 standalone runtime produces the reviewed overlay bytes');
+}
 if (profile.id === '26.930.21537') {
   equal(plan.patchedSha256, 'b4a6fd7e3eece5bef3f255a43064c52910bdaeb995f084e52c522fe08b5ce529', 'Desktop 26.930 plugin produces the reviewed overlay bytes');
 }
@@ -94,7 +100,7 @@ async function run(name, options = {}) {
   const clientInfo = {type: options.type || 'extension', family: options.family === undefined ? 'chrome' : options.family};
   if (!options.missingCapability) clientInfo.agentRequestHeaderEnabled = options.capability === undefined ? false : options.capability;
   const client = {
-    clientInfo, requestHeaderEnabled: false,
+    clientInfo, requestHeaderEnabled: options.headerPreviouslyEnabled === true,
     getSessionParams: () => ({session_id: 'test-session', turn_id: 'test-turn'}),
     readRequestHeaderEnabled: options.unpatched ? context[profile.policy] : info => compat(runtime, info),
     sendRequest: async (operation, params) => { events.push({event: 'browser-send', operation, params}); return true; },
@@ -146,6 +152,12 @@ async function run(name, options = {}) {
   equal([discovery.sent, discovery.configReads], [true, 0]);
   const enabled = await run('headers_already_on', {capability: true});
   equal([enabled.sent, enabled.header, enabled.configReads], [true, true, 0]);
+  if (originalMethod.includes('this.requestHeaderEnabled||this.clientInfo.agentRequestHeaderEnabled===!0')) {
+    const cached = await run('cached_header_enabled_preserved', {headerPreviouslyEnabled: true});
+    equal([cached.sent, cached.header, cached.configReads, cached.markers], [true, true, 0, 0]);
+    const cachedOriginal = await run('original_cached_header_enabled_preserved', {unpatched: true, headerPreviouslyEnabled: true});
+    equal([cachedOriginal.sent, cachedOriginal.header, cachedOriginal.configReads], [true, true, 0]);
+  }
   const legacy = await run('legacy_extension_unmodified', {missingCapability: true});
   equal([legacy.sent, legacy.configReads], [true, 0]);
   const fallbackFamily = await run('official_default_chrome_family', {family: null});

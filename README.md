@@ -130,3 +130,5 @@ pwsh.exe -NoProfile -File .\scripts\test-computer-use-surface-patterns.ps1 -Temp
 ## 来源
 
 此项目是 [chen0416ccc-cpu/codex-windows-fast-patch-skill](https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill) 的派生项目，保留其补丁工具与 Git 历史，并整合适用的社区修复。本 README 为本 fork 重写，自动化更新、CLI 回退和清理流程以本仓库实现为准。此项目不是 OpenAI 官方项目。
+
+Win11 主机上的 Win10 截图排查与独立验证见 [Win10 客体验证说明](references/win10-validation-on-win11.md)。

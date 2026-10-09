@@ -95,6 +95,8 @@ Runtime records live under `%USERPROFILE%\.codex\automation`. Logs are in `logs`
 
 The independent CLI and companion executables live under `%LOCALAPPDATA%\OpenAI\Codex\bin\post-update-<version>`, outside WindowsApps. Opening a terminal or passing `--version` does not prove interactive startup: the copied `0.158.0-alpha.2` CLI has been observed exiting because its background-server mode requires a complete local package. This merge does not fix that fallback failure or the `0x800B0109` deployment failure when the signing certificate is trusted only for the current user. Never publish authorization records, credentials, logs, application data, generated packages or signing keys. See [update safety and cleanup](references/local-post-update-safety.md).
 
+For Windows 10 capture investigation from a Windows 11 host, see [the isolated guest diagnostic](references/win10-validation-on-win11.md).
+
 When application data on another AppX volume carries EFS encryption, ordinary file copying can fail with an encryption error. Backup and restore now copy file content through streams while retaining hash and path-boundary checks; a failed backup still blocks removal. Update and redeploy the automation scripts before deliberately retrying this failure. See the [encrypted-file backup case](references/local-post-update-safety.md#encrypted-application-data-2026-09-24).
 
 ## Validation
