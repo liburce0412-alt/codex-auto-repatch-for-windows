@@ -109,10 +109,16 @@ Store releases. Failed-run evidence remains separate from the successful run.
 
 The prepare process uses only
 `install-handoffs\<authorization-id>\build` for the new build. Before installation,
-record the exact files, lengths and SHA-256 hashes in `cleanup-manifest.json`.
+record the exact files, lengths, creation and modification timestamps in a
+schema-2 `cleanup-manifest.json` for disposable generated build files.
 Cleanup runs after the exact Developer package, finalization and stable window
 checks have passed. It revalidates the run ID, state, path boundaries, absence
-of reparse points and every file's content. Changed or extra files defer cleanup.
+of reparse points and every file's recorded metadata, including an immediate
+pre-deletion check. Changed metadata or extra files defer cleanup. This avoids
+three full content reads of disposable build trees; it does not detect deliberate
+same-size edits with restored timestamps. Existing schema-1 manifests retain
+their full SHA-256 checks. Signed install artifacts and application-data backups
+remain outside this optimization and retain their integrity checks.
 
 Remove only recorded files and empty directories. Keep the latest successful
 run's application-data backup and signed patched MSIX, optional official media,
