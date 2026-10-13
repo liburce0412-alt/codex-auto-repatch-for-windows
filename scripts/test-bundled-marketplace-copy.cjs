@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
 
 const script = fs.readFileSync(path.join(__dirname, 'patch_codex_fast_mode_windows_msix.ps1'), 'utf8').replace(/\r\n/g, '\n');
@@ -18,6 +19,8 @@ const nativeCopy = 'require(`./windows-file-copy-fixture.js`);';
 const retirement = 'async function retire(client){let{plugins:saved}=await client.getUserSavedConfiguration();typeof saved==`object`&&saved&&!Array.isArray(saved)&&Object.hasOwn(saved,`sites@openai-bundled`)&&await client.uninstallPlugin({pluginId:`sites@openai-bundled`})}';
 const research = '{...catalog.plugins.deepResearch,isAvailable:({features:flags})=>flags.deepResearch}';
 const sites = '{...catalog.plugins.sites,isAvailable:({features:flags})=>flags.sites}';
+const codeReview = '{...catalog.plugins.pullRequests,isAvailable:({features:flags})=>flags.codeReviewPlugin}';
+const unifiedCua = '{...catalog.plugins.unifiedComputerUse,isAvailable:({features:flags})=>flags.browserUseTinysky&&(flags.inAppBrowserUse||flags.externalBrowserUse||flags.computerUse)}';
 let cases = 0;
 function run(name, source, expectedStatus, check) {
   const file = path.join(root, name + '.js');
@@ -52,6 +55,31 @@ try {
   run('duplicate-retirement', retirement + retirement.replace('retire(', 'retireAgain(') + `const plugins=[${research}];`, 2);
   run('retirement-with-sites-descriptor', retirement + `const plugins=[{...catalog.plugins.sites,isAvailable:()=>false},${research}];`, 2);
   run('missing-research', retirement + 'const plugins=[];', 2);
+  const optionalSource = `const flags={browserUseTinysky:false,codeReviewPlugin:false};const plugins=[${codeReview},${unifiedCua},${research}];`;
+  run('optional-entries', retirement + optionalSource, 0, after => {
+    assert.ok(after.includes('const flags={browserUseTinysky:false,codeReviewPlugin:false};'), 'engine flags must remain unchanged');
+    assert.ok(after.includes('pullRequests,isAvailable:()=>!0/*codex_windows_code_review_bundled_plugin_available*/,installWhenMissing:!1'));
+    assert.ok(after.includes('unifiedComputerUse,isAvailable:()=>!0/*codex_windows_unified_cua_bundled_plugin_available*/,installWhenMissing:!1'));
+    assert.ok(!after.includes('plugin add'), 'availability must not install plugins');
+    const state = vm.runInNewContext(after + ';plugins.map(plugin=>({available:plugin.isAvailable({features:flags}),automatic:plugin.installWhenMissing}));', {
+      require: () => ({}),
+      catalog: { plugins: { pullRequests: {installWhenMissing:true}, unifiedComputerUse: {installWhenMissing:true}, deepResearch: {installWhenMissing:true} } }
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(state)), [
+      {available:true,automatic:false},{available:true,automatic:false},{available:true,automatic:true}
+    ]);
+  });
+  run('unknown-code-review', retirement + `const plugins=[${codeReview.replace('codeReviewPlugin', 'futureReview')},${research}];`, 2);
+  run('duplicate-code-review', retirement + `const plugins=[${codeReview},${codeReview},${research}];`, 2);
+  run('unknown-unified-cua', retirement + `const plugins=[${unifiedCua.replace('browserUseTinysky', 'futureEngine')},${research}];`, 2);
+  run('duplicate-unified-cua', retirement + `const plugins=[${unifiedCua},${unifiedCua},${research}];`, 2);
+  run('code-review-marker-only', retirement + `/*codex_windows_code_review_bundled_plugin_available*/const plugins=[${research}];`, 2);
+  run('unified-cua-marker-only', retirement + `/*codex_windows_unified_cua_bundled_plugin_available*/const plugins=[${research}];`, 2);
+  run('mixed-code-review', retirement + `const plugins=[${codeReview},{...catalog.plugins.pullRequests,isAvailable:()=>!0/*codex_windows_code_review_bundled_plugin_available*/},${research}];`, 2);
+  run('code-review-extra-predicate', retirement + `const plugins=[${codeReview.replace('flags.codeReviewPlugin}', 'flags.codeReviewPlugin&&flags.futurePolicy}')},${research}];`, 2);
+  run('unified-cua-extra-predicate', retirement + `const plugins=[${unifiedCua.replace('flags.computerUse)}', 'flags.computerUse)&&flags.futurePolicy}')},${research}];`, 2);
+  run('code-review-extra-property', retirement + `const plugins=[${codeReview.replace('Plugin}', 'Plugin,migrate:futureMigration}')},${research}];`, 2);
+  run('unified-cua-extra-property', retirement + `const plugins=[${unifiedCua.replace('Use)}', 'Use),migrate:futureMigration}')},${research}];`, 2);
   process.stdout.write(`Bundled marketplace regression passed: ${cases} cases\n`);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

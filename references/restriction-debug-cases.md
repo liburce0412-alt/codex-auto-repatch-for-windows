@@ -268,7 +268,9 @@ Action:
 - Verify recent logs show the five-plugin set and no new `not_in_bundled_marketplace_plugin_names` for `sites`.
 - Do not run Phone Remote Control scripts for this class. Do not run a full Fast/browser/Computer Use repatch unless separate logs show a closed Desktop gate such as `reason=statsig-disabled`.
 
-## Bundled Descriptor Count Is Lower Than The Package Ships
+## Legacy 26.825 Account-Gated Bundled Descriptor Gaps
+
+This case applies to the recorded `26.825.6671.0` layout and its complete platform/account predicates. It does not establish that every later `browserUseTinysky` predicate must remain closed. For the supported modern Code Review and unified CUA predicates, use "Desktop 26.1007 Filters Optional Bundled Marketplace Entries" below. Keep `user-writing` account authentication and unknown platform/account gates intact.
 
 Symptoms:
 
@@ -746,6 +748,14 @@ Action:
 - If normal `Remove-Item -Recurse -Force` fails, use .NET deletion with a Windows long-path prefix: `[System.IO.Directory]::Delete("\\?\C:\path\to\temp-dir", $true)`.
 - Do not use this cleanup pattern on an unverified or computed path.
 
+## Desktop 26.1007 Uses Service-Tier Access Objects
+
+On Desktop `26.1007.2314.0`, a full or Model Experience dry run can stop at `could not find patch target: fastModeTarget` even though the request path is present. The merged `app-initial-*.js` delegates the requirements-to-speed conversion to a shared helper: the request helper returns an access object or `null`, and the React hook returns `{serviceTierAccess, isLoading}`. The literal `featureRequirements?.fast_mode` and `isServiceTierAllowed` anchors are therefore absent from that asset.
+
+The patcher recognizes the complete auth/host/critical-requirements/cache/converter request shape and the corresponding React hook. It removes only their ChatGPT/PAT-only conditions, preserving the shared converter, independent Fast/Ultrafast restrictions, request/cache arguments, loading state, and memo invalidation. Duplicate request or UI targets and incomplete UI markers fail before writing. Legacy boolean gates remain supported.
+
+Run `scripts/test-service-tier-access-patterns.ps1 -TemporaryRoot <D-drive-test-root> -CurrentAsset <unmodified-app-initial-asset>` and `scripts/test-fast-mode-gate-patterns.ps1 -TemporaryRoot <D-drive-test-root>`. The exact 26.1007 asset passed 479 guard/behavior checks, including full-file change isolation and idempotence; the legacy suite passed 60 behavioral cases. A current-package full dry run and a real `/v1/responses` wire capture returned `service_tier=priority`. These results establish patch and request-wire compatibility. Desktop picker behavior, browser commands, and native interaction still need their own post-install evidence.
+
 ## Model Picker Shows Only One Fast Level (Missing Ultrafast Tier)
 
 Symptoms:
@@ -812,6 +822,24 @@ Tests: run `node scripts/test-chrome-custom-provider-headers.cjs <original-servi
 Real no-login acceptance on Windows with Desktop `26.917.9434.1` and service `26.917.71314` verified session naming, tab listing, Example Domain navigation, a local form input/click, and the actual `x-browser-agent` HTTP header at the controlled local server. Only a tool-kernel reset was needed; Desktop/provider/phone auth were not changed. The two `26.908` profiles passed the same offline guard/behavior tests against their exact source files; the original issue's Desktop `26.908.9136.0` was not reinstalled or live-tested. Do not present that offline coverage as old-Desktop end-to-end proof or claim unknown future builds are supported.
 
 Desktop `26.924.2738.0` ships service `26.924.22138`, not `26.924.20706`. Its exact source passes 48 guard/behavior checks and 26 isolated cache-scope checks against the older `26.917.71314` profile. The live browser-client contract test also accepts the reconstructed service overlay while requiring the packaged client bytes. These checks do not prove browser execution: on an unpatched Store install with external cache junctions, the separate Desktop trusted-path generator can still reject the service before any Chrome command runs. Repair that proven ASAR gate through the guarded external-executor workflow, then retest actual navigation and input.
+
+## Desktop 26.1007 Browser Request-Header Policy Cannot Load
+
+Chrome can be discovered after the extension connects while `createBrowserTab` fails with `Unable to load browser request-header policy. Retry the browser command.` This was reproduced on Desktop `26.1007.2314.1`, CLI `0.162.0-alpha.17.2`, bundled plugins `26.1007.21434`, including a fresh JavaScript kernel with Chrome already running. Treat discovery, native Windows control, and browser command acceptance as separate checks.
+
+The installed plugin service has SHA-256 `2bd293312ee752cfc49876601dcc66ed80e9fdf4e588876aa46592e1b0de612f`; the independent `browser-desktop` service has SHA-256 `8c83e93bdca10cdffa9f7af80db7775ddf1d993186dbf4b8b3d32d11e9bd9666`. Both remain unsupported by the exact missing-token overlay. In the independent source, the policy first awaits caller identity, then waits for the latest Statsig readiness promise. It requires a successful load, a Ready client, and a recognized gate result before returning the request-header value. The observed error identifies the readiness branch; it does not establish which transport, authentication, or service response caused initialization to fail. A separate unauthenticated endpoint probe is not the actual policy request and cannot establish its cause.
+
+Do not register a new hash profile merely because the old overlay's text anchors match, broaden the exact missing-token catch to this generic error, force a gate result, or disable request headers. Capture the current host/worker proxy evidence and the real browser error; keep the policy failure separate from package repair. On the contributor's host, the existing combined surface/proxy patch installed without recovery, all four native API members returned, background enumeration found 4 windows / 40 apps, and complete root/backend/CUA host/worker environments retained the standard proxy variables. All 25 sampled app connections used the dedicated proxy. Native screenshots/input were not exercised. Chrome remained blocked by this policy error, and the in-app browser independently returned `ERR_CONNECTION_CLOSED`.
+
+A later cold start also regenerated `mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS` with the Codex home and current runtime module root, omitting the exact stable marketplace entry required by the strict verifier. Preserve those generated roots, back up and validate TOML before restoring the exact required entry, then rerun scoped strict verification. That configuration repair does not establish Chrome policy acceptance or persistence through another cold start. Do not infer a broken native transport from this exact-entry assertion, and retain the stronger external-root/ASAR checks when the marketplace resolves outside the Codex home.
+
+## Desktop 26.1007 Filters Optional Bundled Marketplace Entries
+
+After the patched Desktop `26.1007.2314.1` starts, the package and stable mirror can contain nine publishable descriptors while `plugin list --marketplace openai-bundled --available --json` exposes only seven. `deep-research` is present, but Code Review is gated by `features.codeReviewPlugin` and unified Computer Use by `features.browserUseTinysky` plus the browser/native surface flags. This is an additional discovery failure; a passing local-runtime check without `-VerifyAllBundledPluginsAvailable` does not cover it.
+
+The bundled-marketplace patcher recognizes the complete optional descriptor predicates and restores their availability, preserving engine selection, authentication and other descriptors. It explicitly sets `installWhenMissing:false` on these two entries: the shared catalog otherwise defaults both to automatic installation. Already installed/enabled state remains under the user's control. Absent optional descriptors are compatible with older layouts. Unknown predicates, duplicates, partial marker states, additional conditions and unknown descriptor properties fail before any write. Run `node scripts/test-bundled-marketplace-copy.cjs`, then a targeted `-OnlyBundledMarketplaceCopy -DryRun`. After the authorized in-place update, require all publishable package descriptors to appear with their current versions as installed or available; do not install an optional plugin to satisfy this assertion.
+
+Desktop `26.1007.2314.2` post-install acceptance passed strict all-bundled verification and structured discovery of all nine publishable entries. The four installed/enabled entries remained `browser`, `chrome`, `computer-use` and `latex`; the other five remained uninstalled/disabled. Real in-app Browser and Chrome local navigation, DOM reads, Chinese form input, submission and inspected screenshots passed, as did HTTPS navigation and native background enumeration. Native Windows screenshot/input and Windows 10 guest acceptance were not exercised by this check.
 
 ## Windows PowerShell 5.1 Rejects Valid TOML Passed Through Native Stdin
 

@@ -734,7 +734,28 @@ const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
 const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`(?:&&\4!==`personalAccessToken`)?\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+// Desktop 26.1007 delegates both speed modes to the shared requirements converter.
+const speedAccessOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`&&\4!==`personalAccessToken`\)return null;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
+const speedAccessPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
+
+const speedOriginal = [...text.matchAll(speedAccessOriginalRe)];
+const speedPatched = [...text.matchAll(speedAccessPatchedRe)];
+if (speedOriginal.length + speedPatched.length > 1) {
+  process.stderr.write('fast-mode-speed-access-target-ambiguous\n');
+  process.exit(2);
+}
+if (speedOriginal.length === 1) {
+  const [source, fn, manager, host, auth, authFn, data, requirementsFn, query, converter] = speedOriginal[0];
+  const replacement = `async function ${fn}(${manager},${host}){let ${auth}=await ${authFn}(${manager},${host});let ${data}=await ${requirementsFn}(${manager},${host},{priority:\`critical\`});return ${manager}.query.setData(${query},{authMethod:${auth},hostId:${host}},${data}),${converter}(${data})}`;
+  fs.writeFileSync(file, text.replace(source, replacement));
+  process.stdout.write('patched');
+  process.exit(0);
+}
+if (speedPatched.length === 1) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
 
 if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || currentManagerCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
   process.stdout.write('already-patched');
@@ -803,6 +824,46 @@ const fs = require('node:fs');
 const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
 
+const speedUiPrefix = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.c\)\(10\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=\2\?\.hostId\?\?\4,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\5\),([A-Za-z_$][\w$]*)=/g;
+const speedUiCandidates = [];
+for (const match of text.matchAll(speedUiPrefix)) {
+  const [, fn, param, memo, root, host, auth, allowed] = match;
+  const offset = match.index + match[0].length;
+  const original = `${auth}?.authMethod===\`chatgpt\`||${auth}?.authMethod===\`personalAccessToken\``;
+  const patched = '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0';
+  const value = text.startsWith(original, offset) ? original : text.startsWith(patched, offset) ? patched : null;
+  if (value === null) continue;
+  const end = text.indexOf('}var ', offset);
+  if (end < 0 || end - offset > 1800) continue;
+  const body = text.slice(offset + value.length, end);
+  const access = body.match(/let\{data:([A-Za-z_$][\w$]*),isPending:([A-Za-z_$][\w$]*)\}=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=!!([A-Za-z_$][\w$]*)\?\.isLoading\|\|([A-Za-z_$][\w$]*)&&\2,([A-Za-z_$][\w$]*);/);
+  if (!access || access[4] !== auth || access[5] !== allowed) continue;
+  const [, data, pending, loading, , , result] = access;
+  const conversion = body.match(/([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)!=null\?[A-Za-z_$][\w$]*\(\4\):null/);
+  const returned = body.match(/\{serviceTierAccess:[A-Za-z_$][\w$]*,isLoading:([A-Za-z_$][\w$]*)\}/);
+  if (!conversion || conversion[1] !== result || conversion[2] !== allowed ||
+      conversion[3] !== loading || conversion[4] !== data || !returned || returned[1] !== loading) continue;
+  speedUiCandidates.push({offset, value, patched});
+}
+if (speedUiCandidates.length > 1) {
+  process.stderr.write('fast-ui-speed-access-target-ambiguous\n');
+  process.exit(2);
+}
+const speedUiMarkerCount = text.split('CODEX_SERVICE_TIER_ACCESS_UI_V1').length - 1;
+if (speedUiMarkerCount !== speedUiCandidates.filter(candidate => candidate.value === candidate.patched).length) {
+  process.stderr.write('fast-ui-speed-access-patch-incomplete\n');
+  process.exit(2);
+}
+if (speedUiCandidates.length === 1) {
+  const {offset, value, patched} = speedUiCandidates[0];
+  if (value === patched) {
+    process.stdout.write('already-patched');
+  } else {
+    fs.writeFileSync(file, text.slice(0, offset) + patched + text.slice(offset + value.length));
+    process.stdout.write('patched');
+  }
+  process.exit(0);
+}
 const constantPatchedRe = /let\{data:\w+,isPending:\w+\}=[^;]+,(\w+)=!1,(\w+)=!0,\w+;[\s\S]*?\{isServiceTierAllowed:\2,isLoading:\1\}/;
 if (constantPatchedRe.test(text)) {
   process.stdout.write('already-patched');
@@ -1747,6 +1808,36 @@ const deepResearchPatchedMarker = 'codex_windows_deep_research_bundled_plugin_av
 let after = text;
 let changed = false;
 
+function patchOptionalAvailability(property, originalPredicate, marker) {
+  const identifier = '[A-Za-z_$][\\w$]*';
+  const prefix = `\\.\\.\\.${identifier}\\.${identifier}\\.${property},isAvailable:`;
+  const declarations = [...after.matchAll(new RegExp(prefix, 'g'))];
+  if (declarations.length === 0 && !after.includes(marker)) return;
+  const original = new RegExp(`${prefix}${originalPredicate}(?=})`, 'g');
+  const patched = new RegExp(`${prefix}\\(\\)=>!0/\\*${marker}\\*/,installWhenMissing:!1(?=})`, 'g');
+  const originalMatches = [...after.matchAll(original)];
+  const patchedMatches = [...after.matchAll(patched)];
+  const markerCount = after.split(marker).length - 1;
+  if (declarations.length !== 1 ||
+      (markerCount === 0 ? originalMatches.length !== 1 :
+        markerCount !== 1 || patchedMatches.length !== 1 || originalMatches.length !== 0)) {
+    process.stderr.write(`bundled-marketplace-${property}-availability-target-not-found-or-ambiguous\n`);
+    process.exit(2);
+  }
+  if (markerCount === 0) {
+    // Publish the optional entry without switching browser engines or installing it.
+    after = after.replace(original, () => `${declarations[0][0]}()=>!0/*${marker}*/,installWhenMissing:!1`);
+    changed = true;
+  }
+}
+
+patchOptionalAvailability('pullRequests',
+  '\\(\\{features:([A-Za-z_$][\\w$]*)\\}\\)=>\\1\\.codeReviewPlugin',
+  'codex_windows_code_review_bundled_plugin_available');
+patchOptionalAvailability('unifiedComputerUse',
+  '\\(\\{features:([A-Za-z_$][\\w$]*)\\}\\)=>\\1\\.browserUseTinysky&&\\(\\1\\.inAppBrowserUse\\|\\|\\1\\.externalBrowserUse\\|\\|\\1\\.computerUse\\)',
+  'codex_windows_unified_cua_bundled_plugin_available');
+
 const hasNativeWindowsCopyFallback =
   (after.includes('copyDirectoryAllowDecryptedDestinationOnEncryptionFailure') &&
    after.includes('windows-file-copy-')) ||
@@ -2222,6 +2313,19 @@ function Find-BrowserComputerUsePatchTargets {
   }
 }
 
+function Test-FastModeRequestTargetText {
+  param([string]$Text)
+  if ($Text.Contains('featureRequirements?.fast_mode')) { return $true }
+  return $Text -match 'async function ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\)\{let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3\);(?:if\(\4!==`chatgpt`&&\4!==`personalAccessToken`\)return null;)?let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([$A-Za-z_][$\w]*),\{authMethod:\4,hostId:\3\},\6\),([$A-Za-z_][$\w]*)\(\6\)\}'
+}
+
+function Test-ServiceTierAccessUiTargetText {
+  param([string]$Text)
+  return $Text.Contains('serviceTierAccess:') -and
+    $Text -match '\?\.authMethod===`chatgpt`\|\|[$A-Za-z_][$\w]*\?\.authMethod===`personalAccessToken`|/\*CODEX_SERVICE_TIER_ACCESS_UI_V1\*/!0' -and
+    $Text -match 'let\{data:([$A-Za-z_][$\w]*),isPending:([$A-Za-z_][$\w]*)\}=[$A-Za-z_][$\w]*\([$A-Za-z_][$\w]*,[$A-Za-z_][$\w]*\),([$A-Za-z_][$\w]*)=!![$A-Za-z_][$\w]*\?\.isLoading\|\|[$A-Za-z_][$\w]*&&\2,[$A-Za-z_][$\w]*;'
+}
+
 function Find-PatchTargets {
   param(
     [string]$RgPath,
@@ -2236,7 +2340,7 @@ function Find-PatchTargets {
   $fastModeTarget = $null
   foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'read-service-tier-for-request-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
     $text = Get-Content -Raw -LiteralPath $candidate
-    if ($text.Contains('featureRequirements?.fast_mode')) {
+    if (Test-FastModeRequestTargetText $text) {
       $fastModeTarget = $candidate
       break
     }
@@ -2244,7 +2348,7 @@ function Find-PatchTargets {
   if ([string]::IsNullOrWhiteSpace($fastModeTarget)) {
     foreach ($candidate in (Invoke-RgList $RgPath 'Failed to read service tier for request' $assetsDir)) {
       $text = Get-Content -Raw -LiteralPath $candidate
-      if ($text.Contains('featureRequirements?.fast_mode')) {
+      if (Test-FastModeRequestTargetText $text) {
         $fastModeTarget = $candidate
         break
       }
@@ -2263,10 +2367,11 @@ function Find-PatchTargets {
   if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
-      if ($text.Contains('isServiceTierAllowed') -and
+      if ((Test-ServiceTierAccessUiTargetText $text) -or
+          ($text.Contains('isServiceTierAllowed') -and
           $text.Contains('featureRequirements?.fast_mode') -and
           (($text -match '=!!\w+\?\.isLoading\|\|\w+&&\w+,\w+=\w+&&!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1') -or
-           ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1'))) {
+           ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1')))) {
         $fastModeUiTarget = $candidate
         break
       }
@@ -2795,7 +2900,7 @@ function Invoke-PatchAppAsar {
     $fastModeTarget = $null
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'read-service-tier-for-request-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
-      if ($text.Contains('featureRequirements?.fast_mode')) {
+      if (Test-FastModeRequestTargetText $text) {
         $fastModeTarget = $candidate
         break
       }
@@ -2803,7 +2908,7 @@ function Invoke-PatchAppAsar {
     if ([string]::IsNullOrWhiteSpace($fastModeTarget)) {
       foreach ($candidate in (Invoke-RgList $rgPath 'Failed to read service tier for request' $assetsDir)) {
         $text = Get-Content -Raw -LiteralPath $candidate
-        if ($text.Contains('featureRequirements?.fast_mode')) {
+        if (Test-FastModeRequestTargetText $text) {
           $fastModeTarget = $candidate
           break
         }
@@ -2826,10 +2931,11 @@ function Invoke-PatchAppAsar {
     if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
       foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
         $text = Get-Content -Raw -LiteralPath $candidate
-        if ($text.Contains('isServiceTierAllowed') -and
+        if ((Test-ServiceTierAccessUiTargetText $text) -or
+            ($text.Contains('isServiceTierAllowed') -and
             $text.Contains('featureRequirements?.fast_mode') -and
             (($text -match '=!!\w+\?\.isLoading\|\|\w+&&\w+,\w+=\w+&&!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1') -or
-             ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1'))) {
+             ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1')))) {
           $fastModeUiTarget = $candidate
           break
         }
