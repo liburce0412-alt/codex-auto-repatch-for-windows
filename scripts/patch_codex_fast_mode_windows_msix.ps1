@@ -658,12 +658,49 @@ function Invoke-NpxAsar {
     [string]$Source,
     [string]$Target
   )
+  # npm exec --offline still needs cached registry metadata. Reuse an already
+  # installed ASAR CLI directly, so a registry outage cannot break extraction.
+  $node = Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($node) {
+    $cacheRoots = @()
+    if ($env:npm_config_cache) { $cacheRoots += $env:npm_config_cache }
+    $npm = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($npm) {
+      $configuredCache = & $npm.Source config get cache 2>$null
+      if ($LASTEXITCODE -eq 0 -and $configuredCache) {
+        $cacheRoots += ([string]($configuredCache | Select-Object -Last 1)).Trim()
+      }
+    }
+    if ($env:LOCALAPPDATA) { $cacheRoots += Join-Path $env:LOCALAPPDATA 'npm-cache' }
+    foreach ($cacheRoot in @($cacheRoots | Select-Object -Unique)) {
+      $npxRoot = Join-Path $cacheRoot '_npx'
+      foreach ($cacheEntry in @(Get-ChildItem -LiteralPath $npxRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $asarRoot = Join-Path $cacheEntry.FullName 'node_modules\asar'
+        $manifestPath = Join-Path $asarRoot 'package.json'
+        $cliPath = Join-Path $asarRoot 'bin\asar.js'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $cliPath -PathType Leaf)) { continue }
+        try {
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.name -ne 'asar' -or $manifest.bin.asar -ne './bin/asar.js') { continue }
+          $probe = & $node.Source $cliPath --version 2>$null
+          if ($LASTEXITCODE -ne 0 -or ([string]$probe).Trim() -ne ('v' + $manifest.version)) { continue }
+        } catch { continue }
+        Write-Log "using cached ASAR $($manifest.version): $cliPath"
+        & $node.Source $cliPath $Action $Source $Target
+        if ($LASTEXITCODE -ne 0) {
+          Fail "ASAR $Action failed with exit code $LASTEXITCODE"
+        }
+        return
+      }
+    }
+  }
   $npx = Get-Command npx -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($npx) {
     & $npx.Source --yes asar $Action $Source $Target
   } else {
     # Codex's bundled Windows runtime can include pnpm and node without the
-    # npm/npx shims. Keep npx as the preferred path, but make ASAR extraction
+    # npm/npx shims. Without a usable cached CLI, make ASAR extraction
     # usable from that supported runtime layout as well.
     $pnpm = (Get-RequiredCommand 'pnpm').Source
     & $pnpm dlx asar $Action $Source $Target
@@ -3980,6 +4017,11 @@ New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $tempWork | Out-Null
 
 try {
+  # Resolve packaging tools before copying and patching a large package tree.
+  if (-not $DryRun) {
+    $makeappx = Require-WindowsSdkTool 'makeappx.exe'
+    $signtool = Require-WindowsSdkTool 'signtool.exe'
+  }
   Copy-PackageLayout $sourcePackageRoot $workPackageRoot
   Remove-OldPackageArtifacts $workPackageRoot
 
@@ -4011,8 +4053,6 @@ try {
     Write-Log "app.asar header sha256: $(Get-AsarHeaderSha256 $asar)"
     Update-ElectronAsarIntegrity $workApp
 
-    $makeappx = Require-WindowsSdkTool 'makeappx.exe'
-    $signtool = Require-WindowsSdkTool 'signtool.exe'
     $publisher = Get-ManifestPublisher $workPackageRoot
     $cert = Get-OrCreateSigningCertificate $publisher
     Trust-SigningCertificate $cert
