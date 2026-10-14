@@ -1229,30 +1229,19 @@ function Invoke-Main {
     if ($PrepareExternalInstall -and -not $patchCommand.Parameters.ContainsKey('PreserveSourceVersion')) {
       throw 'MSIX patch script cannot preserve the authorized exact-artifact version'
     }
-    $dryRunArguments = @(
-      '-OnlyBrowserComputerUse',
-      '-IncludeCustomModelVisibility',
-      '-DryRun',
-      '-ForceRebuild',
-      '-AppPath', $sourceCandidate.AppPath,
-      '-OutputRoot', $OutputRoot
-    )
-    if ($PrepareExternalInstall) { $dryRunArguments += @('-KeepWorkDir', '-PreserveSourceVersion') }
-    else { $dryRunArguments += '-CleanupAfter' }
-    $dryRunResult = Invoke-PwshScript -Label 'msix-dry-run' -ScriptPath $PatchScript -Arguments $dryRunArguments
-    if ($dryRunResult.ExitCode -ne 0) {
-      throw "Codex MSIX DryRun failed; no patched package was installed. See $($dryRunResult.StderrPath)"
-    }
+    # Validate and patch the isolated package once; publication still requires
+    # successful target matching, syntax, ASAR integrity, signing and payload checks.
+    Write-RepairLog 'preparing one validated package build; duplicate full DryRun omitted'
 
     $visibleProcessesBeforeInstall = @(Get-VisibleCodexProcesses)
     if ($visibleProcessesBeforeInstall.Count -gt 0 -and -not $AllowVisibleAppRepair) {
       $state['last_status'] = 'deferred-visible-app'
       $state['last_deferred_at'] = [DateTime]::UtcNow.ToString('o')
-      $state['last_deferred_stage'] = 'after-msix-dry-run'
+      $state['last_deferred_stage'] = 'before-msix-package'
       $state['last_deferred_pids'] = @($visibleProcessesBeforeInstall.Id)
       $state['last_log'] = $RunLog
       Write-RepairState $state
-      Write-RepairLog "MSIX install deferred because a responsive Codex window appeared during DryRun: pids=$($visibleProcessesBeforeInstall.Id -join ',')"
+      Write-RepairLog "MSIX install deferred because a responsive Codex window appeared before package preparation: pids=$($visibleProcessesBeforeInstall.Id -join ',')"
       if ($Launch) {
         Start-CodexDesktop
       }

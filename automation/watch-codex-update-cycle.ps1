@@ -1645,32 +1645,10 @@ function Complete-PreparedOneClickRepair {
         } catch {
           Write-CycleLog "warning: completed handoff archival failed: $($_.Exception.Message)"
         }
-        try {
-          Write-UpdateProgress @{ kind='stage'; text='启动检查通过，核对本轮清理清单' }
-          . (Join-Path $automationRoot 'codex-update-cleanup.ps1')
-          $cleaned = Invoke-VerifiedUpdateCleanup -RequestRoot $installRequestRoot -AuthorizationId $AuthorizationId -CycleStatePath $statePath
-          $PackageDetails['cleanup'] = 'completed'
-          $PackageDetails['cleanup_files'] = $cleaned.Files
-          $PackageDetails['cleanup_bytes'] = $cleaned.Bytes
-          Write-CycleLog "cleanup completed: files=$($cleaned.Files) bytes=$($cleaned.Bytes); official recovery MSIX, signed patched MSIX, logs and user data retained"
-        } catch {
-          $PackageDetails['cleanup'] = 'deferred'
-          $PackageDetails['cleanup_error'] = $_.Exception.Message
-          Write-CycleLog "cleanup deferred; Desktop remains successfully repaired: $($_.Exception.Message)"
-        }
-        try {
-          Write-UpdateProgress @{ kind='stage'; text='清理历史失败残留与不再使用的旧版 CLI' }
-          . (Join-Path $automationRoot 'codex-history-cleanup.ps1')
-          $history = Invoke-CodexHistoryCleanup -AutomationRoot $automationRoot -AuthorizationId $AuthorizationId
-          $PackageDetails['history_cleanup'] = if ($history.Deferred) { 'deferred' } else { 'completed' }
-          $PackageDetails['history_cleanup_bytes'] = $history.Bytes
-          $PackageDetails['history_cleanup_report'] = $history.Report
-          Write-CycleLog "history cleanup: cleaned=$($history.Cleaned) deferred=$($history.Deferred) bytes=$($history.Bytes); current runtime and latest recovery retained"
-        } catch {
-          $PackageDetails['history_cleanup'] = 'deferred'
-          $PackageDetails['history_cleanup_error'] = $_.Exception.Message
-          Write-CycleLog "history cleanup deferred; Desktop remains successfully repaired: $($_.Exception.Message)"
-        }
+        # Ordinary and historical cleanup are separate, explicitly requested jobs.
+        $PackageDetails['cleanup'] = 'awaiting-separate-request'
+        $PackageDetails['history_cleanup'] = 'awaiting-separate-request'
+        Write-CycleLog 'installation complete; build files, recovery artifacts and logs retained for separately requested cleanup'
         Write-CycleState -Status 'repair-restart-stable' -Details $PackageDetails
         return 0
       }
@@ -1885,9 +1863,6 @@ function Invoke-CodexUpdateMonitor {
     $prepared = Assert-PreparedInstallHandoff -Authorization $consumedAuthorization
     $packageDetails['install_artifact_path'] = $prepared.ArtifactPath
     $packageDetails['install_artifact_sha256'] = $prepared.ArtifactSha256
-    . (Join-Path $automationRoot 'codex-update-cleanup.ps1')
-    $cleanupCount = Save-UpdateCleanupManifest -RequestRoot $installRequestRoot -AuthorizationId $AuthorizationId
-    Write-CycleLog "cleanup planned for $cleanupCount build files after stable restart; recovery artifacts and logs excluded"
     Write-CycleState -Status 'prepared-install-validated' -Details $packageDetails
   } catch {
     $failureMessage = ($_.Exception.Message -replace '[\r\n]+', ' ').Trim()

@@ -51,15 +51,13 @@ foreach ($PrepareExternalInstall in @($true, $false)) {
   $checks++
 }
 $repair = [IO.File]::ReadAllText($repairPath)
-$dryArgs = [regex]::Match($repair, '(?s)    \$dryRunArguments = @\(.*?(?=    \$dryRunResult =)')
 $packageArgs = [regex]::Match($repair, '(?s)    \$packageArguments = @\(.*?(?=    \$packageResult =)')
-if (-not $dryArgs.Success -or -not $packageArgs.Success) { throw 'Automatic preparation argument builders are missing.' }
+if (-not $packageArgs.Success) { throw 'Automatic preparation argument builders are missing.' }
 $sourceCandidate = @{AppPath='fixture-source'}
 $OutputRoot = 'fixture-output'
 foreach ($PrepareExternalInstall in @($true, $false)) {
-  . ([scriptblock]::Create($dryArgs.Value))
   . ([scriptblock]::Create($packageArgs.Value))
-  foreach ($arguments in @($dryRunArguments, $packageArguments)) {
+  foreach ($arguments in @(,$packageArguments)) {
     if (($arguments -contains '-PreserveSourceVersion') -ne $PrepareExternalInstall -or
         $arguments -notcontains '-OnlyBrowserComputerUse' -or
         $arguments -notcontains '-ForceRebuild') { throw 'Automatic scope/version arguments are incorrect.' }
@@ -88,4 +86,20 @@ foreach ($script:damage in @($false,$true)) {
   if (($script:messages -contains 'patched MSIX: fixture.msix') -eq $script:damage) { throw 'Damaged package was published, or valid package was suppressed.' }
   $checks++
 }
+# Automatic preparation must run the expensive package producer only once.
+$producerCalls = @($repairAst.FindAll({param($n)
+  $n -is [Management.Automation.Language.CommandAst] -and
+  $n.GetCommandName() -eq 'Invoke-PwshScript' -and
+  $n.Extent.Text -match '-ScriptPath \$PatchScript'
+}, $true))
+if ($producerCalls.Count -ne 1) { throw 'Automatic preparation must have exactly one complete package build.' }
+$checks++
+$watcherPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'automation\watch-codex-update-cycle.ps1'
+$watcherAst = [Management.Automation.Language.Parser]::ParseFile($watcherPath, [ref]$tokens, [ref]$errors)
+$automaticCleanup = @($watcherAst.FindAll({param($n)
+  $n -is [Management.Automation.Language.CommandAst] -and
+  $n.GetCommandName() -in @('Save-UpdateCleanupManifest','Invoke-VerifiedUpdateCleanup','Invoke-CodexHistoryCleanup')
+}, $true))
+if ($errors.Count -or $automaticCleanup.Count) { throw 'Ordinary/history cleanup must remain separate from automatic installation.' }
+$checks++
 Write-Output "External artifact version/producer regression passed: checks=$checks"

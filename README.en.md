@@ -12,7 +12,7 @@ Reapply compatible local Codex Desktop patches after Microsoft Store updates, sh
 2. An external executor verifies the exact package and prepares a signed patch. A separate terminal streams real stages and child-process logs; closing the viewer does not stop the worker.
 3. Before replacing the Store package, verify the independent CLI, patch identity, version, signature and hashes, then create a verified application-data backup.
 4. Install the exact artifact, restore user application data, finalize the repair and verify a stable Desktop window.
-5. Only after installation, finalization and stable restart succeed, remove manifest-verified build files, historical failed-install residues, superseded recovery copies and unused older CLI versions. New disposable build files are checked by path, size and timestamps instead of repeated full content reads; older manifests, install artifacts, data backups and historical cleanup retain their hash checks. Keep the current runtime, latest recovery package and data backup, and diagnostic records. Active, unknown, newer or mismatched targets are retained or deferred.
+5. Finish the update after installation, finalization and stable restart. Ordinary and historical cleanup run only on a separate user request: no automatic build/history scans, deletion or cleanup inventories. Retain valid shared SDK/ASAR caches.
 
 Failures open one interactive CLI terminal by default. The `%USERPROFILE%\.codex\automation\disable-cli-fallback` marker disables that launch while retaining the failure status, recovery files and logs. A failed Store version is not retried repeatedly. Original signed Store recovery media is optional; application-data backup is mandatory. If installation fails after removal, Desktop may be unavailable until reinstalled through Microsoft Store; the workflow does not automatically redeploy Store as its fallback.
 
@@ -25,6 +25,8 @@ Signing recognizes the certificate's own EKU extension and reuses an existing va
 The next default-scope or full repack also adds browser profile import exception logging. Look for `Browser profile import exception` after a failure; exceptions use the existing sensitive logging channel without additional request or result logging. This aids diagnosis and is not a confirmed cookie-import fix. Updating the scripts alone does not start an installation or restart Desktop.
 
 ## Compatibility update
+
+Automatic repatching performs one complete validation and build against an isolated package copy, omitting the duplicate full DryRun. Target matching, syntax, ASAR integrity, signing, payload, exact-version and stable-restart checks remain. Cleanup is separate from updating, with no automatic full-file cleanup inventory.
 
 ASAR extraction and packing first reuse a working CLI already installed in the npm cache, without requiring online registry access or cached registry metadata. Only when no usable tool is present does the existing npx/pnpm acquisition path run. A selected tool failure stops the operation rather than retrying a download and hiding an archive error. Non-dry-run builds resolve Windows SDK tools before copying the application tree, so missing packaging dependencies fail before expensive patch work; existing valid SDK caches remain reusable.
 
