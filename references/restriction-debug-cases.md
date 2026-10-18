@@ -18,6 +18,14 @@ Reset the Node REPL kernel after repair because failed WASM initialization is ca
 
 Regression command: `node scripts/test-browser-accessibility-assets.cjs`. Optional arguments `<healthy-wasm.br> <corrupt-wasm.br>` replay an asset pair without adding vendor binaries. The suite covers source recovery, version/service mismatch, preflight, backups, idempotence and Chinese-path success/failure in PowerShell 5.1/7. The wrapper restores the caller's encoding; a missing package or plugin descriptor fails rather than reporting zero assets as verified. A known layout without either AX loader reports not applicable.
 
+## Browser Smoke Target Changes or Fails Independently
+
+A single public test page can change its DOM or fail on one network route while browser control remains healthy. On Desktop `26.1013.3656.1`, Chrome read `https://example.com/` with title `Example Domain` and multilingual body text, but a real DOM query found zero `h1` elements. The historical one-heading assertion would therefore reject a working page read. The in-app browser independently reported `ERR_CONNECTION_CLOSED` for that origin, and an explicit-proxy curl probe failed its TLS handshake; both the proxy probe and the in-app browser successfully reached the official configuration reference, whose AX tree exposed the expected page title and heading.
+
+Record each browser, target, error and successful read separately. These observations do not identify the failing network hop or prove that Chrome and the in-app browser use the same route. Preserve certificate, authentication and request-header checks. If the failure is a connection error rather than an access restriction, one independently reachable, task-relevant public HTTPS page can distinguish a target-specific failure from total browser failure; do not silently discard the first error or use another page to bypass sign-in or policy denial.
+
+Verify the current URL, observed title and meaningful AX/DOM content for public pages. Use a task-owned local fixture when exact selectors or input assertions are needed, and keep its result separate from external HTTPS reachability. If an error tab becomes a policy-blocked internal `data:` page, do not repeatedly bind or inspect it, print its large encoded URL, or bypass that restriction; allow normal temporary-tab cleanup. A target or DOM failure alone does not justify an MSIX repatch.
+
 ## Model Experience Is Partially Broken
 
 Symptoms:
@@ -167,7 +175,7 @@ Action:
 
 - Reapply the MSIX patch when `browser_use_availability_resolved` is still `statsig-disabled`.
 - When the log is `local-patched` but browser setup fails before discovery, check the browser-client trusted hash before reinstalling an already healthy extension or native host.
-- Validate with a real browser smoke test, not just plugin-list output. A good minimal test opens a controlled tab such as `https://example.com/`, asks the extension backend for the active tab, confirms the title `Example Domain`, and then closes the temporary tab.
+- Validate with a real browser smoke test, not just plugin-list output. A minimal test opens a temporary tab at a task-relevant public HTTPS page, confirms its final URL, observed title and meaningful visible content through the extension backend, then closes the tab. See "Browser Smoke Target Changes or Fails Independently" for target failures and page changes.
 - Keep the distinction explicit: `local-patched` proves the Desktop gate is open; it does not prove Chrome native messaging or the extension backend is healthy.
 
 ## Browser Client Lacks Privileged Node REPL Capabilities
@@ -195,7 +203,7 @@ Action:
 - Run `install-computer-use-local.ps1 -VerifyOnly`. The repair restores the exact packaged browser-client bytes into the stable marketplace and versioned cache; `-StrictVerifyOnly` requires those hashes to match and validates either the legacy ASAR hash contract or the complete `26.814` native-host path contract.
 - For an external physical cache root, require the installer to set the resolved marketplace/cache roots in the user-level `NODE_REPL_TRUSTED_CODE_PATHS`, then run the full MSIX patcher and require `CODEX_NODE_REPL_TRUSTED_PATHS_V1` in the installed ASAR. After restart, the Desktop-generated config must contain the original roots plus the physical external roots; only then retry browser setup.
 - Reset the current Node REPL kernel after repair, import the active cached browser client, require `setupBrowserRuntime()` to succeed, and confirm `agent.browsers.get("chrome")` returns the real Chrome extension backend.
-- Finish with a real controlled page smoke test: open `https://example.com/`, verify the final URL, title `Example Domain`, exactly one `h1`, and heading text `Example Domain`, then close the temporary tab.
+- Finish with a real public HTTPS page read through the Desktop browser channel: verify the final URL, observed title and meaningful visible content, then close the temporary tab. Fixed selector assertions require a task-owned fixture; third-party page structure is not a runtime contract.
 - If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.
 
 ## Computer Use Settings Says Plugin Unavailable

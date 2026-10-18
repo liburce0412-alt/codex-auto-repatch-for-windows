@@ -666,9 +666,14 @@ function Invoke-NpxAsar {
     if ($env:npm_config_cache) { $cacheRoots += $env:npm_config_cache }
     $npm = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($npm) {
-      $configuredCache = & $npm.Source config get cache 2>$null
-      if ($LASTEXITCODE -eq 0 -and $configuredCache) {
-        $cacheRoots += ([string]($configuredCache | Select-Object -Last 1)).Trim()
+      try {
+        $configuredCache = & $npm.Source config get cache 2>$null
+        if ($LASTEXITCODE -eq 0 -and $configuredCache) {
+          $cacheRoots += ([string]($configuredCache | Select-Object -Last 1)).Trim()
+        }
+      } catch {
+        # Configuration discovery is optional; known cache roots and acquisition remain usable.
+        Write-Log 'npm cache configuration lookup failed; checking known cache roots'
       }
     }
     if ($env:LOCALAPPDATA) { $cacheRoots += Join-Path $env:LOCALAPPDATA 'npm-cache' }

@@ -15,6 +15,7 @@ function Write-Log([string]$Message) { $script:logs.Add($Message) }
 function Fail([string]$Message) { throw $Message }
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 $script:allowNpx = $true
+$script:npmSource = $null
 $testRecord = @{ Downloads=0; Args=@() }
 $npxStub = Join-Path $root 'npx.ps1'
 $pnpmStub = Join-Path $root 'pnpm.ps1'
@@ -24,7 +25,7 @@ function Get-Command {
   param([string]$Name, $ErrorAction)
   switch ($Name) {
     'node' { return $nodeCommand }
-    'npm' { return $null }
+    'npm' { if ($script:npmSource) { return [pscustomobject]@{Source=$script:npmSource} } }
     'npx' { if ($script:allowNpx) { return [pscustomobject]@{Source=$npxStub} } }
     default { throw "Unexpected command lookup: $Name" }
   }
@@ -43,9 +44,22 @@ try {
   $cli = 'const fs=require("fs");const a=process.argv.slice(2);if(a[0]==="--version"){console.log("v3.2.0");process.exit(0)}if(a[0]==="fail"){process.exit(9)}fs.writeFileSync(a[2],JSON.stringify(a));'
   [IO.File]::WriteAllText((Join-Path $asarRoot 'bin\asar.js'), $cli)
   $out = Join-Path $root 'args.json'
-  Invoke-NpxAsar extract 'source with spaces 中文.asar' $out
-  $actual = Get-Content -LiteralPath $out -Raw | ConvertFrom-Json
-  Assert ($actual[1] -eq 'source with spaces 中文.asar' -and $actual[2] -eq $out -and $testRecord.Downloads -eq 0) 'Cached tool did not preserve arguments or attempted acquisition'
+  $unicodeSource = 'source with spaces ' + [char]0x4e2d + [char]0x6587 + '.asar'
+  Invoke-NpxAsar extract $unicodeSource $out
+  $actual = Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json
+  Assert ($actual[1] -ceq $unicodeSource -and $actual[2] -eq $out -and $testRecord.Downloads -eq 0) 'Cached tool did not preserve arguments or attempted acquisition'
+
+  $script:npmSource = Join-Path $root 'npm-fails.cmd'
+  [IO.File]::WriteAllText($script:npmSource, "@echo off`r`necho npm configuration lookup failed 1>&2`r`nexit /b 1`r`n")
+  Invoke-NpxAsar extract $unicodeSource $out
+  Assert ($testRecord.Downloads -eq 0) 'npm configuration failure blocked a usable cache'
+  $validCache = $env:npm_config_cache
+  $env:npm_config_cache = Join-Path $root 'missing-during-npm-failure'
+  Invoke-NpxAsar extract 'source' $out
+  Assert ($testRecord.Downloads -eq 1) 'npm configuration failure blocked acquisition fallback'
+  $testRecord.Downloads = 0
+  $env:npm_config_cache = $validCache
+  $script:npmSource = $null
 
   $badRoot = Join-Path $env:npm_config_cache '_npx\a-malformed\node_modules\asar'
   $null = New-Item -ItemType Directory -Path (Join-Path $badRoot 'bin')
@@ -68,7 +82,7 @@ try {
   $script:allowNpx = $false
   Invoke-NpxAsar extract 'source' $out
   Assert ($testRecord.Downloads -eq 3 -and ($testRecord.Args -join '|') -eq "dlx|asar|extract|source|$out") 'pnpm-only runtime fallback regressed'
-  Write-Output 'ASAR_CACHE_TESTS_PASSED cases=6; synthetic cached CLIs and acquisition stubs; no network access'
+  Write-Output 'ASAR_CACHE_TESTS_PASSED cases=8; synthetic cached CLIs and acquisition stubs; no network access'
 } finally {
   $env:npm_config_cache = $oldCache
   $env:LOCALAPPDATA = $oldLocal
