@@ -959,6 +959,29 @@ The contributor then installed that combined candidate as `26.1002.6548.1` witho
 
 For this build the plugin browser service source is `0e1188675552812f68a2e487f6464a357c378e9534cbde2eb6f6e218dc1d1c46`, and the independent browser-desktop runtime source is `9c7fb0d8123de8959501269de45a0fb0cbab2e454a52bf677e2893fef3f48def`. Both are outside the current exact header profiles, so only that overlay is skipped; do not claim browser authentication repair from a passing runtime check. Sky `0.7.6` needs no legacy request-context overlay. On this host the optional all-bundled availability assertion also reports `deep-research` as undiscoverable while all four requested browser/native plugins are installed and enabled. Record that separately from the passing scoped strict check; it is not evidence that the required CUA cache is broken, and its cause has not been established.
 
+## Windows Screenshot Shows an Occluding App
+
+On Desktop `26.1013.4894.1` with `@oai/cua 0.2.6` and Sky `0.7.8`, a real QQ main window had a process-backed app identifier and a usable accessibility tree, but a separate `getScreenshot()` call displayed an overlapping Codex window with part of QQ still visible underneath. No coordinate input was sent using that wrong image. This reproduced the symptom outside a game and without the reported Codex app-identifier mismatch; missing game AX or incorrect app attribution alone therefore does not explain every occurrence.
+
+During an already-authorized interaction diagnostic:
+
+1. Check the current window inventory and bind the exact intended HWND. If an old window closes or a post/dialog opens a new window, enumerate again and bind that returned window instead of reusing the old handle.
+2. Read the target's fresh accessibility state and confirm an exposed `Raise` secondary action. Derive its element index from that state; do not assume a root index or action exists.
+3. Keep the verified Raise action and capture adjacent in one JavaScript call:
+
+   ```javascript
+   await app.performSecondaryAction(observedRaiseIndex, "Raise");
+   await app.getAXStateAndScreenshot();
+   ```
+
+4. Inspect the actual image together with the accessibility state before using coordinates. If it still shows another app, stop input and retain the failure. Do not choose click locations from the occluding app or repeatedly capture the same obscured target.
+
+On the observed QQ window, this sequence returned the intended image and allowed verified category selection, post navigation, detail-window rebinding, keyboard close, and text expansion. A prior `coordinate input geometry is unavailable` error was recovered by observing the intended foreground window and taking a fresh screenshot before the next input. An error alone does not establish that input reached another app.
+
+`Accessibility state unavailable for window …` is a status string in the recorded Windows binding, not an exception proving that `getApp` returned no object. A screenshot can remain available when AX is absent. Conversely, a correct AX tree does not establish that screenshot pixels show the same window. If AX is absent, do not invent a Raise element; use only documented activation capabilities available in that runtime and within the user's authorized diagnostic scope.
+
+The observations support a foreground/occlusion dependency, not a proven internal capture mechanism: no atomic before/after foreground log or native capture-backend trace was collected, and wrong-image screenshots remained in conversation tool output rather than standalone evidence files. This is an operational workaround, not an MSIX, helper, or runtime-code repair, and it does not establish correct game capture or input. Keep the separate offline window-identity mutation finding distinct; no candidate metadata guard was installed or credited for this recovery. Do not patch unknown helper binaries or repack Desktop merely because this symptom occurs.
+
 ## Windows CUA Entry Instructions Use an Unsupported App Name
 
 The current runtime can ship `instructions/windows/computer.md` with the macOS-style `cua.getApp("Example App")` example. Windows requires `cua.listWindows()` followed by `cua.getApp({ windowId })`. `scripts/lib/windows-cua-runtime.ps1` corrects only that exact old text, preserves already-correct instructions, and refuses an unknown shape. The local repair saves the original instructions under the Codex backup directory; full MSIX repair also updates the staged copy. A screenshot acceptance must raise the selected window and compare the visible content with its accessibility tree.

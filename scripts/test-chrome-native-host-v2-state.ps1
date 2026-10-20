@@ -474,6 +474,32 @@ try {
   } '*invalid schemaVersion or entries array*'
   Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+
+  # A second verified copy of the same official runtime must not invalidate
+  # healthy persisted host state merely because discovery sorts it differently.
+  $recoveredBin = Join-Path $fixtureRoot 'runtime\cua_node\recovered\bin'
+  New-Item -ItemType Directory -Force -Path (Join-Path $recoveredBin 'node_modules') | Out-Null
+  Copy-Item -LiteralPath $nodePath -Destination (Join-Path $recoveredBin 'node.exe')
+  Copy-Item -LiteralPath $nodeReplPath -Destination (Join-Path $recoveredBin 'node_repl.exe')
+  $recoveredInventory = $runtimeInventory | Select-Object *
+  $recoveredInventory.NodePath = Join-Path $recoveredBin 'node.exe'
+  $recoveredInventory.NodeReplPath = Join-Path $recoveredBin 'node_repl.exe'
+  $recoveredResource = Get-ChromeNativeHostV2ExpectedResource $chromeRoot $recoveredInventory $script:CodexHome
+  foreach ($statePath in $statePaths) {
+    ConvertTo-JsonFile $statePath ([ordered]@{schemaVersion=2;entries=@($recoveredResource)})
+  }
+  Assert-ThrowsLike { Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome } '*no current app-server entry*'
+  $runtimeInventory.AllowedCuaBinRoots = @($runtimeBin,$recoveredBin)
+  $variants = @(Get-ChromeNativeHostV2AcceptableResources $chromeRoot $runtimeInventory $script:CodexHome)
+  if ($variants.Count -ne 4) { throw 'Expected both verified runtime pairs with both app-server paths' }
+  Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  $stateBefore = [IO.File]::ReadAllText($statePaths[0])
+  Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  if ([IO.File]::ReadAllText($statePaths[0]) -cne $stateBefore) { throw 'Healthy recovered runtime state was rewritten' }
+  $mixed = Copy-JsonValue $recoveredResource
+  $mixed.paths.nodePath = $nodePath
+  ConvertTo-JsonFile $statePaths[0] ([ordered]@{schemaVersion=2;entries=@($mixed)})
+  Assert-ThrowsLike { Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome } '*no current app-server entry*'
 } finally {
   $env:LOCALAPPDATA = $previousLocalAppData
 }

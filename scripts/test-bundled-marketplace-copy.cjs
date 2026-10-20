@@ -21,6 +21,7 @@ const research = '{...catalog.plugins.deepResearch,isAvailable:({features:flags}
 const sites = '{...catalog.plugins.sites,isAvailable:({features:flags})=>flags.sites}';
 const codeReview = '{...catalog.plugins.pullRequests,isAvailable:({features:flags})=>flags.codeReviewPlugin}';
 const unifiedCua = '{...catalog.plugins.unifiedComputerUse,isAvailable:({features:flags})=>flags.browserUseTinysky&&(flags.inAppBrowserUse||flags.externalBrowserUse||flags.computerUse)}';
+const imageGuidedAssets = '{...catalog.plugins.imageGuidedAssets,autoInstallOptOutKey:catalog.plugins.imageGuidedAssets.name,isAvailable:({features:flags})=>flags.imageGuidedAssets}';
 let cases = 0;
 function run(name, source, expectedStatus, check) {
   const file = path.join(root, name + '.js');
@@ -55,18 +56,25 @@ try {
   run('duplicate-retirement', retirement + retirement.replace('retire(', 'retireAgain(') + `const plugins=[${research}];`, 2);
   run('retirement-with-sites-descriptor', retirement + `const plugins=[{...catalog.plugins.sites,isAvailable:()=>false},${research}];`, 2);
   run('missing-research', retirement + 'const plugins=[];', 2);
-  const optionalSource = `const flags={browserUseTinysky:false,codeReviewPlugin:false};const plugins=[${codeReview},${unifiedCua},${research}];`;
+  const optionalSource = `const flags={browserUseTinysky:false,codeReviewPlugin:false,imageGuidedAssets:false};const plugins=[${codeReview},${unifiedCua},${imageGuidedAssets},${research}];`;
   run('optional-entries', retirement + optionalSource, 0, after => {
-    assert.ok(after.includes('const flags={browserUseTinysky:false,codeReviewPlugin:false};'), 'engine flags must remain unchanged');
+    assert.ok(after.includes('const flags={browserUseTinysky:false,codeReviewPlugin:false,imageGuidedAssets:false};'), 'feature flags must remain unchanged');
     assert.ok(after.includes('pullRequests,isAvailable:()=>!0/*codex_windows_code_review_bundled_plugin_available*/,installWhenMissing:!1'));
     assert.ok(after.includes('unifiedComputerUse,isAvailable:()=>!0/*codex_windows_unified_cua_bundled_plugin_available*/,installWhenMissing:!1'));
+    assert.ok(after.includes('imageGuidedAssets,autoInstallOptOutKey:catalog.plugins.imageGuidedAssets.name,isAvailable:()=>!0/*codex_windows_image_guided_assets_bundled_plugin_available*/,installWhenMissing:!1'));
     assert.ok(!after.includes('plugin add'), 'availability must not install plugins');
     const state = vm.runInNewContext(after + ';plugins.map(plugin=>({available:plugin.isAvailable({features:flags}),automatic:plugin.installWhenMissing}));', {
       require: () => ({}),
-      catalog: { plugins: { pullRequests: {installWhenMissing:true}, unifiedComputerUse: {installWhenMissing:true}, deepResearch: {installWhenMissing:true} } }
+      catalog: { plugins: {
+        pullRequests: {installWhenMissing:true},
+        unifiedComputerUse: {installWhenMissing:true},
+        imageGuidedAssets: {installWhenMissing:true,name:'image-guided-assets'},
+        deepResearch: {installWhenMissing:true}
+      } }
     });
     assert.deepEqual(JSON.parse(JSON.stringify(state)), [
-      {available:true,automatic:false},{available:true,automatic:false},{available:true,automatic:true}
+      {available:true,automatic:false},{available:true,automatic:false},
+      {available:true,automatic:false},{available:true,automatic:true}
     ]);
   });
   run('unknown-code-review', retirement + `const plugins=[${codeReview.replace('codeReviewPlugin', 'futureReview')},${research}];`, 2);
@@ -75,6 +83,11 @@ try {
   run('duplicate-unified-cua', retirement + `const plugins=[${unifiedCua},${unifiedCua},${research}];`, 2);
   run('code-review-marker-only', retirement + `/*codex_windows_code_review_bundled_plugin_available*/const plugins=[${research}];`, 2);
   run('unified-cua-marker-only', retirement + `/*codex_windows_unified_cua_bundled_plugin_available*/const plugins=[${research}];`, 2);
+  run('unknown-image-guided-assets', retirement + `const plugins=[${imageGuidedAssets.replace('flags.imageGuidedAssets}', 'flags.futureImageGuidedAssets}')},${research}];`, 2);
+  run('duplicate-image-guided-assets', retirement + `const plugins=[${imageGuidedAssets},${imageGuidedAssets},${research}];`, 2);
+  run('image-guided-assets-marker-only', retirement + `/*codex_windows_image_guided_assets_bundled_plugin_available*/const plugins=[${research}];`, 2);
+  run('image-guided-assets-extra-predicate', retirement + `const plugins=[${imageGuidedAssets.replace('flags.imageGuidedAssets}', 'flags.imageGuidedAssets&&flags.futurePolicy}')},${research}];`, 2);
+  run('image-guided-assets-extra-property', retirement + `const plugins=[${imageGuidedAssets.replace('autoInstallOptOutKey:', 'installWhenMissing:true,autoInstallOptOutKey:')},${research}];`, 2);
   run('mixed-code-review', retirement + `const plugins=[${codeReview},{...catalog.plugins.pullRequests,isAvailable:()=>!0/*codex_windows_code_review_bundled_plugin_available*/},${research}];`, 2);
   run('code-review-extra-predicate', retirement + `const plugins=[${codeReview.replace('flags.codeReviewPlugin}', 'flags.codeReviewPlugin&&flags.futurePolicy}')},${research}];`, 2);
   run('unified-cua-extra-predicate', retirement + `const plugins=[${unifiedCua.replace('flags.computerUse)}', 'flags.computerUse)&&flags.futurePolicy}')},${research}];`, 2);

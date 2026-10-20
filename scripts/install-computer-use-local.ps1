@@ -2556,6 +2556,34 @@ function Repair-ConfiguredNodeReplRuntimePaths {
   Write-Log "migrated retired node_repl runtime paths: $(Split-Path -Parent $commandPath) -> $(Split-Path -Parent $RuntimeInventory.NodeReplPath)"
 }
 
+function Test-CuaRuntimeEnvironmentPaths {
+  param(
+    [object]$RuntimeInventory,
+    [string]$NodeReplPath,
+    [string]$NodePath
+  )
+
+  foreach ($entry in @(
+      [pscustomobject]@{ Name = 'CODEX_NODE_REPL_PATH'; Path = $NodeReplPath },
+      [pscustomobject]@{ Name = 'CODEX_BROWSER_USE_NODE_PATH'; Path = $NodePath }
+    )) {
+    if ([string]::IsNullOrWhiteSpace($entry.Path) -or -not (Test-Path -LiteralPath $entry.Path -PathType Leaf)) {
+      throw "user $($entry.Name) is missing or points to a missing runtime: $($entry.Path)"
+    }
+  }
+
+  # Inventory verifies both executable contents against the installed package
+  # and rejects runtime paths escaping the managed user-local root. A recovered
+  # copy remains valid when Desktop later extracts another copy of that package.
+  foreach ($binRoot in @($RuntimeInventory.AllowedCuaBinRoots)) {
+    if ((Test-PathMatchesAnyCurrentFile $NodeReplPath @((Join-Path $binRoot 'node_repl.exe'))) -and
+        (Test-PathMatchesAnyCurrentFile $NodePath @((Join-Path $binRoot 'node.exe')))) {
+      return
+    }
+  }
+  throw "user CUA runtime paths must point to the same verified current-package bin directory: node_repl=$NodeReplPath node=$NodePath"
+}
+
 function Test-UserCuaRuntimeEnvironment {
   param([object]$RuntimeInventory)
 
@@ -2563,18 +2591,9 @@ function Test-UserCuaRuntimeEnvironment {
     Write-Log 'skipping user CUA runtime environment verification'
     return
   }
-  foreach ($entry in @(
-      [pscustomobject]@{ Name = 'CODEX_NODE_REPL_PATH'; Expected = $RuntimeInventory.NodeReplPath },
-      [pscustomobject]@{ Name = 'CODEX_BROWSER_USE_NODE_PATH'; Expected = $RuntimeInventory.NodePath }
-    )) {
-    $actual = [Environment]::GetEnvironmentVariable($entry.Name, 'User')
-    if ([string]::IsNullOrWhiteSpace($actual) -or -not (Test-Path -LiteralPath $actual -PathType Leaf)) {
-      throw "user $($entry.Name) is missing or points to a missing runtime: $actual"
-    }
-    if (-not (Test-PathMatchesAnyCurrentFile $actual @($entry.Expected))) {
-      throw "user $($entry.Name) does not match the current package runtime: actual=$actual expected=$($entry.Expected)"
-    }
-  }
+  Test-CuaRuntimeEnvironmentPaths -RuntimeInventory $RuntimeInventory `
+    -NodeReplPath ([Environment]::GetEnvironmentVariable('CODEX_NODE_REPL_PATH', 'User')) `
+    -NodePath ([Environment]::GetEnvironmentVariable('CODEX_BROWSER_USE_NODE_PATH', 'User'))
   Write-Log 'user CUA runtime environment verification ok'
 }
 
@@ -2810,16 +2829,30 @@ function Get-ChromeNativeHostV2AcceptableResources {
     [string]$CodexHomeResolved
   )
 
-  $resources = @(Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
-  foreach ($desktopManagedPath in @($RuntimeInventory.DesktopManagedCodexCliPaths)) {
-    if ([string]::IsNullOrWhiteSpace($desktopManagedPath)) {
+  $runtimeVariants = @($RuntimeInventory)
+  foreach ($binRoot in @($RuntimeInventory.AllowedCuaBinRoots)) {
+    $node = Join-Path $binRoot 'node.exe'
+    $nodeRepl = Join-Path $binRoot 'node_repl.exe'
+    if ((Test-PathMatchesAnyCurrentFile $node @($RuntimeInventory.NodePath)) -and
+        (Test-PathMatchesAnyCurrentFile $nodeRepl @($RuntimeInventory.NodeReplPath))) {
       continue
     }
-    if (Test-PathMatchesAnyCurrentFile $desktopManagedPath @($resources[0].paths.codexCliPath)) {
-      continue
+    $variant = $RuntimeInventory | Select-Object *
+    $variant.NodePath = $node
+    $variant.NodeReplPath = $nodeRepl
+    $runtimeVariants += $variant
+  }
+  $resources = @()
+  foreach ($runtime in $runtimeVariants) {
+    $resources += (Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $runtime $CodexHomeResolved)
+    foreach ($desktopManagedPath in @($RuntimeInventory.DesktopManagedCodexCliPaths)) {
+      if ([string]::IsNullOrWhiteSpace($desktopManagedPath) -or
+          (Test-PathMatchesAnyCurrentFile $desktopManagedPath @($RuntimeInventory.CodexCliPath))) {
+        continue
+      }
+      $resources += (Get-ChromeNativeHostV2ExpectedResource `
+        $ChromeCacheRoot $runtime $CodexHomeResolved -CodexCliPathOverride $desktopManagedPath)
     }
-    $resources += (Get-ChromeNativeHostV2ExpectedResource `
-      $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved -CodexCliPathOverride $desktopManagedPath)
   }
   return @($resources)
 }

@@ -1,6 +1,7 @@
 param(
   [string]$AppPath,
   [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\codex-msix-repack'),
+  [string]$AsarWorkRoot,
   [switch]$InstallPrerequisites,
   [switch]$Install,
   [switch]$PreserveSourceVersion,
@@ -1847,6 +1848,7 @@ const text = fs.readFileSync(file, 'utf8');
 const copyPatchedMarker = 'codex_windows_bundled_marketplace_copy_fallback';
 const sitesPatchedMarker = 'codex_windows_sites_bundled_plugin_available';
 const deepResearchPatchedMarker = 'codex_windows_deep_research_bundled_plugin_available';
+const imageGuidedAssetsPatchedMarker = 'codex_windows_image_guided_assets_bundled_plugin_available';
 let after = text;
 let changed = false;
 
@@ -1932,6 +1934,33 @@ if (!after.includes(deepResearchPatchedMarker)) {
     process.exit(2);
   }
   after = after.replace(deepResearchAvailabilityRe, `isAvailable:()=>!0/*${deepResearchPatchedMarker}*/`);
+  changed = true;
+}
+
+const imageGuidedAssetsIdentifier = '[A-Za-z_$][\\w$]*';
+const imageGuidedAssetsDeclarationRe = new RegExp(
+  `\\.\\.\\.${imageGuidedAssetsIdentifier}\\.${imageGuidedAssetsIdentifier}\\.imageGuidedAssets,`, 'g');
+const imageGuidedAssetsDeclarations = [...after.matchAll(imageGuidedAssetsDeclarationRe)];
+const imageGuidedAssetsPrefix =
+  `\\.\\.\\.${imageGuidedAssetsIdentifier}\\.${imageGuidedAssetsIdentifier}\\.imageGuidedAssets,autoInstallOptOutKey:[^,]+,isAvailable:`;
+const imageGuidedAssetsOriginalRe = new RegExp(
+  `(${imageGuidedAssetsPrefix})\\(\\{features:(${imageGuidedAssetsIdentifier})\\}\\)=>\\2\\.imageGuidedAssets(?=})`, 'g');
+const imageGuidedAssetsPatchedRe = new RegExp(
+  `${imageGuidedAssetsPrefix}\\(\\)=>!0/\\*${imageGuidedAssetsPatchedMarker}\\*/,installWhenMissing:!1(?=})`, 'g');
+const imageGuidedAssetsOriginalMatches = [...after.matchAll(imageGuidedAssetsOriginalRe)];
+const imageGuidedAssetsPatchedMatches = [...after.matchAll(imageGuidedAssetsPatchedRe)];
+const imageGuidedAssetsMarkerCount = after.split(imageGuidedAssetsPatchedMarker).length - 1;
+if (imageGuidedAssetsDeclarations.length === 0 && imageGuidedAssetsMarkerCount === 0) {
+  // Older Desktop builds do not ship this optional plugin.
+} else if (imageGuidedAssetsDeclarations.length !== 1 ||
+    (imageGuidedAssetsMarkerCount === 0 ? imageGuidedAssetsOriginalMatches.length !== 1 :
+      imageGuidedAssetsMarkerCount !== 1 || imageGuidedAssetsPatchedMatches.length !== 1 ||
+      imageGuidedAssetsOriginalMatches.length !== 0)) {
+  process.stderr.write('bundled-marketplace-image-guided-assets-availability-target-not-found-or-ambiguous\n');
+  process.exit(2);
+} else if (imageGuidedAssetsMarkerCount === 0) {
+  after = after.replace(imageGuidedAssetsOriginalRe,
+    (match, prefix) => `${prefix}()=>!0/*${imageGuidedAssetsPatchedMarker}*/,installWhenMissing:!1`);
   changed = true;
 }
 
@@ -2858,7 +2887,11 @@ function Invoke-PatchAppAsar {
     [string]$WorkDir
   )
   $asarPath = Join-Path $WorkAppPath 'resources\app.asar'
-  $extractDir = Join-Path $WorkDir 'asar-extracted'
+  # Keep the extracted ASAR path short enough for Windows PowerShell 5.1.
+  # Store package bundles include hashed asset names; under the recoverable
+  # installer output root the old `asar-extracted` name could push a target
+  # past MAX_PATH before the Node patcher had a chance to read it.
+  $extractDir = Join-Path $WorkDir 'asar'
   $newAsarPath = Join-Path $WorkDir 'app.asar'
   $rgPath = Join-Path $WorkAppPath 'resources\rg.exe'
   if (-not (Test-Path -LiteralPath $rgPath)) {
@@ -4007,7 +4040,12 @@ $workRoot = Join-Path $OutputRoot $packageShortId
 $workPackageRoot = Join-Path $workRoot 'package'
 $workApp = Join-Path $workPackageRoot 'app'
 $artifactsDir = Join-Path $workRoot 'artifacts'
-$tempWork = Join-Path $workRoot ('work-' + [guid]::NewGuid().ToString('N'))
+$tempWorkRoot = if ([string]::IsNullOrWhiteSpace($AsarWorkRoot)) {
+  Join-Path $env:TEMP 'codex-msix-work'
+} else {
+  [IO.Path]::GetFullPath($AsarWorkRoot)
+}
+$tempWork = Join-Path $tempWorkRoot ('w-' + [guid]::NewGuid().ToString('N').Substring(0, 16))
 $msixPath = Join-Path $artifactsDir ($packageShortId + '_patched.msix')
 
 Write-Log "source app: $sourceApp"
@@ -4098,7 +4136,7 @@ try {
   if ($KeepWorkDir) {
     Write-Log "keeping workdir: $tempWork"
   } elseif (Test-Path -LiteralPath $tempWork) {
-    Remove-DirectoryRobust -Path $tempWork -RequiredRoot $workRoot -BestEffort
+    Remove-DirectoryRobust -Path $tempWork -RequiredRoot $tempWorkRoot -BestEffort
   }
 }
 

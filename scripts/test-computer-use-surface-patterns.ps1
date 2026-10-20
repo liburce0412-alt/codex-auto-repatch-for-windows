@@ -47,6 +47,7 @@ if (-not [IO.Path]::GetFullPath($fixtureRoot).StartsWith($temp.TrimEnd('\') + '\
   throw 'fixture root is outside TemporaryRoot'
 }
 New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+function Invoke-ComputerUseSurfaceRegression {
 $patcherPath = Join-Path $fixtureRoot 'PatchComputerUseSurface.cjs'
 [System.IO.File]::WriteAllText($patcherPath, $patcherAst.Value, [System.Text.UTF8Encoding]::new($false))
 
@@ -427,5 +428,13 @@ Write-Output 'CUA_FAIL_CLOSED_SELECTION_AND_SCOPE_PASSED'
 }
 Write-Output 'ASAR_RUNNER_FALLBACK_PASSED'
 
-Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
 Write-Output "Windows CUA surface regression passed: $fixtureRoot"
+}
+
+try {
+  Invoke-ComputerUseSurfaceRegression
+} finally {
+  if (Test-Path -LiteralPath $fixtureRoot -PathType Container) {
+    Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
