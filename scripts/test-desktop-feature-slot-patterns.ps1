@@ -295,7 +295,9 @@ try {
   $main928Source = $main917Source.Replace('inAppBrowserUse:e.inAppBrowserUse,', 'inAppBrowserUse:e.inAppBrowserUse,mcpAppsBrowserUse:e.mcpAppsBrowserUse,')
   foreach ($case in @(
       @{ Name = '26.928 sender'; Source = $sender928Source; Target = 'sender'; Finder = $senderTest; Slot = 'mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
-      @{ Name = '26.928 main'; Source = $main928Source; Target = 'main'; Finder = $receiverTest; Slot = 'mcpAppsBrowserUse:e.mcpAppsBrowserUse' })) {
+      @{ Name = '26.928 main'; Source = $main928Source; Target = 'main'; Finder = $receiverTest; Slot = 'mcpAppsBrowserUse:e.mcpAppsBrowserUse' },
+      @{ Name = '26.1016 sender'; Source = $sender928Source.Replace('mcpAppsBrowserUse:', 'dotBrowserUse:!1,mcpAppsBrowserUse:'); Target = 'sender'; Finder = $senderTest; Slot = 'dotBrowserUse:!1,mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
+      @{ Name = '26.1016 main'; Source = $main928Source.Replace('mcpAppsBrowserUse:', 'dotBrowserUse:!1,mcpAppsBrowserUse:'); Target = 'main'; Finder = $receiverTest; Slot = 'dotBrowserUse:!1,mcpAppsBrowserUse:e.mcpAppsBrowserUse' })) {
     if (-not (& $case.Finder $case.Source)) { throw "Original finder missed $($case.Name)" }
     $result = Invoke-PatcherFixture -Name $case.Name -Source $case.Source -Target $case.Target -ExpectedExitCode 0
     $patched928 = [IO.File]::ReadAllText($result.AssetPath)
