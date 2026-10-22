@@ -86,6 +86,8 @@ Action:
 - If the unified command registry scores `title`, `id`, and `searchAliases`, `/goal` already matches the Goal command id and the legacy slash-command scorer does not need patching.
 - For the newer plugin page auth shape, force only the local auth-blocked variable to `false`; do not require the old sidebar, skills-page, and detail-page chunks to exist.
 
+Desktop 26.1016.6573.0 and 26.1016.8120.0 insert dotBrowserUse before the optional mcpAppsBrowserUse field in both the renderer payload and main-process receiver. The sender/receiver discovery, rewrite and patched-state patterns preserve these fields independently. Run test-desktop-feature-slot-patterns.ps1 -TemporaryRoot <test-root> to verify legacy, MCP-only, Dot-only and combined layouts, including false-value preservation and idempotence. Do not force the new Dot/MCP Apps values while repairing the five existing browser availability flags.
+
 ## Windows CUA Surface Is Missing After Runtime Verification
 
 Symptoms:
@@ -763,6 +765,8 @@ On Desktop `26.1007.2314.0`, a full or Model Experience dry run can stop at `cou
 The patcher recognizes the complete auth/host/critical-requirements/cache/converter request shape and the corresponding React hook. It removes only their ChatGPT/PAT-only conditions, preserving the shared converter, independent Fast/Ultrafast restrictions, request/cache arguments, loading state, and memo invalidation. Duplicate request or UI targets and incomplete UI markers fail before writing. Legacy boolean gates remain supported.
 
 Run `scripts/test-service-tier-access-patterns.ps1 -TemporaryRoot <D-drive-test-root> -CurrentAsset <unmodified-app-initial-asset>` and `scripts/test-fast-mode-gate-patterns.ps1 -TemporaryRoot <D-drive-test-root>`. The exact 26.1007 asset passed 479 guard/behavior checks, including full-file change isolation and idempotence; the legacy suite passed 60 behavioral cases. A current-package full dry run and a real `/v1/responses` wire capture returned `service_tier=priority`. These results establish patch and request-wire compatibility. Desktop picker behavior, browser commands, and native interaction still need their own post-install evidence.
+
+Desktop `26.1016.6573.0` and `26.1016.8120.0` add `amazonBedrock` as a third recognized authentication mode in both complete service-tier access conditions. The request matcher accepts that optional third comparison only for the same auth local, and the UI matcher accepts either complete two- or three-mode condition followed by the assignment delimiter. Unknown extra conditions, mismatched locals, mixed targets and partial markers are rejected. The shared requirements converter, independent Fast/Ultrafast restrictions, cache arguments and React loading/memo behavior remain unchanged. Run the same two regression suites with the current unmodified asset before the full package dry run.
 
 ## Model Picker Shows Only One Fast Level (Missing Ultrafast Tier)
 

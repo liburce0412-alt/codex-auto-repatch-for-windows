@@ -98,10 +98,10 @@ Assert ($patcherText.Contains("('w-' + [guid]::NewGuid().ToString('N').Substring
 Assert ($patcherText.Contains('-RequiredRoot $tempWorkRoot -BestEffort')) 'temporary work cleanup stays within its dedicated root'
 Assert ($runnerText.Contains("'"+".codex\cwp-tmp"+"'" )) 'recoverable runner uses a short user-local temp parent'
 Assert ($runnerText.Contains('AsarWorkRoot = $tempRoot')) 'recoverable runner passes the short root directly to the patcher'
-Assert (-not $runnerText.Contains('function Remove-RepairTemporaryRoot')) 'runner leaves temporary workspace cleanup to the separate command'
+Assert ($runnerText.Contains('Remove-RepairTemporaryRoot -Path $tempRoot -SentinelId $tempSentinelId')) 'short temp workspace is removed only after successful validation'
 Assert ($runnerText.Contains('temporary workspace retained for diagnosis')) 'failed repair retains and reports the temporary workspace'
-Assert (-not $runnerText.Contains('Remove-DirectoryTreeRobust -Path $resolvedOutputRoot')) 'runner retains build and recovery output'
-Assert ($runnerText.Contains('repair artifacts retained for separately requested cleanup')) 'successful run reports retained artifacts'
+Assert ($runnerText.Contains('Remove-DirectoryTreeRobust -Path $resolvedOutputRoot')) 'successful acceptance permits guarded current-build and recovery cleanup'
+Assert ($launcherText.Contains('-KeepArtifacts:([bool]$payload.KeepArtifacts)')) 'elevated bootstrap forwards explicit artifact retention'
 Assert (-not ($runnerText -match '\$env:(TEMP|TMP|npm_config_cache)\s*=')) 'runner preserves shared temporary and npm cache settings'
 Assert ($launcherText.Contains("'Downloads\codex-msix-repack'")) 'manual launcher preserves the established build root'
 $markerFunctionAst = $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)

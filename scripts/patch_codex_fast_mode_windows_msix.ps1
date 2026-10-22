@@ -778,7 +778,7 @@ const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=a
 const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`(?:&&\4!==`personalAccessToken`)?\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 // Desktop 26.1007 delegates both speed modes to the shared requirements converter.
-const speedAccessOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`&&\4!==`personalAccessToken`\)return null;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
+const speedAccessOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`&&\4!==`personalAccessToken`(?:&&\4!==`amazonBedrock`)?\)return null;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 const speedAccessPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
@@ -873,8 +873,10 @@ for (const match of text.matchAll(speedUiPrefix)) {
   const [, fn, param, memo, root, host, auth, allowed] = match;
   const offset = match.index + match[0].length;
   const original = `${auth}?.authMethod===\`chatgpt\`||${auth}?.authMethod===\`personalAccessToken\``;
+  const originals = [original + `||${auth}?.authMethod===\`amazonBedrock\``, original];
   const patched = '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0';
-  const value = text.startsWith(original, offset) ? original : text.startsWith(patched, offset) ? patched : null;
+  const value = originals.find(candidate => text.startsWith(candidate, offset) && text[offset + candidate.length] === ',') ??
+    (text.startsWith(patched, offset) && text[offset + patched.length] === ',' ? patched : null);
   if (value === null) continue;
   const end = text.indexOf('}var ', offset);
   if (end < 0 || end - offset > 1800) continue;
@@ -2387,7 +2389,7 @@ function Find-BrowserComputerUsePatchTargets {
 function Test-FastModeRequestTargetText {
   param([string]$Text)
   if ($Text.Contains('featureRequirements?.fast_mode')) { return $true }
-  return $Text -match 'async function ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\)\{let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3\);(?:if\(\4!==`chatgpt`&&\4!==`personalAccessToken`\)return null;)?let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([$A-Za-z_][$\w]*),\{authMethod:\4,hostId:\3\},\6\),([$A-Za-z_][$\w]*)\(\6\)\}'
+  return $Text -match 'async function ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\)\{let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3\);(?:if\(\4!==`chatgpt`&&\4!==`personalAccessToken`(?:&&\4!==`amazonBedrock`)?\)return null;)?let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([$A-Za-z_][$\w]*),\{authMethod:\4,hostId:\3\},\6\),([$A-Za-z_][$\w]*)\(\6\)\}'
 }
 
 function Test-ServiceTierAccessUiTargetText {
@@ -2578,7 +2580,8 @@ function Find-PatchTargets {
       if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
           (($text -match '([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4') -or
            ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(?:dotBrowserUse:[^,}]+,)?(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
-           $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or ($text -match 'inAppBrowserUse:!0,(?:dotBrowserUse:[^,}]+,)?(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,){0,8}?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
+           $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or
+           ($text -match 'inAppBrowserUse:!0,(?:dotBrowserUse:[^,}]+,)?(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
         $desktopFeatureMainTarget = $candidate
         break
       }

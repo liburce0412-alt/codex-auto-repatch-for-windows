@@ -293,11 +293,15 @@ try {
   # Preserve it byte-for-byte in both payload directions instead of enabling it.
   $sender928Source = $senderSlotSource.Replace('inAppBrowserUse:s.inAppBrowserUse,', 'inAppBrowserUse:s.inAppBrowserUse,mcpAppsBrowserUse:s.mcpAppsBrowserUse,')
   $main928Source = $main917Source.Replace('inAppBrowserUse:e.inAppBrowserUse,', 'inAppBrowserUse:e.inAppBrowserUse,mcpAppsBrowserUse:e.mcpAppsBrowserUse,')
+  $sender1016Source = $sender928Source.Replace('mcpAppsBrowserUse:s.mcpAppsBrowserUse,', 'dotBrowserUse:s.dotBrowserUse,mcpAppsBrowserUse:s.mcpAppsBrowserUse,')
+  $main1016Source = $main928Source.Replace('mcpAppsBrowserUse:e.mcpAppsBrowserUse,', 'dotBrowserUse:e.dotBrowserUse,mcpAppsBrowserUse:e.mcpAppsBrowserUse,')
   foreach ($case in @(
       @{ Name = '26.928 sender'; Source = $sender928Source; Target = 'sender'; Finder = $senderTest; Slot = 'mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
       @{ Name = '26.928 main'; Source = $main928Source; Target = 'main'; Finder = $receiverTest; Slot = 'mcpAppsBrowserUse:e.mcpAppsBrowserUse' },
-      @{ Name = '26.1016 sender'; Source = $sender928Source.Replace('mcpAppsBrowserUse:', 'dotBrowserUse:!1,mcpAppsBrowserUse:'); Target = 'sender'; Finder = $senderTest; Slot = 'dotBrowserUse:!1,mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
-      @{ Name = '26.1016 main'; Source = $main928Source.Replace('mcpAppsBrowserUse:', 'dotBrowserUse:!1,mcpAppsBrowserUse:'); Target = 'main'; Finder = $receiverTest; Slot = 'dotBrowserUse:!1,mcpAppsBrowserUse:e.mcpAppsBrowserUse' })) {
+      @{ Name = '26.1016 sender'; Source = $sender1016Source; Target = 'sender'; Finder = $senderTest; Slot = 'dotBrowserUse:s.dotBrowserUse,mcpAppsBrowserUse:s.mcpAppsBrowserUse' },
+      @{ Name = '26.1016 main'; Source = $main1016Source; Target = 'main'; Finder = $receiverTest; Slot = 'dotBrowserUse:e.dotBrowserUse,mcpAppsBrowserUse:e.mcpAppsBrowserUse' },
+      @{ Name = 'Dot only sender'; Source = $sender1016Source.Replace('mcpAppsBrowserUse:s.mcpAppsBrowserUse,', ''); Target = 'sender'; Finder = $senderTest; Slot = 'dotBrowserUse:s.dotBrowserUse' },
+      @{ Name = 'Dot only main'; Source = $main1016Source.Replace('mcpAppsBrowserUse:e.mcpAppsBrowserUse,', ''); Target = 'main'; Finder = $receiverTest; Slot = 'dotBrowserUse:e.dotBrowserUse' })) {
     if (-not (& $case.Finder $case.Source)) { throw "Original finder missed $($case.Name)" }
     $result = Invoke-PatcherFixture -Name $case.Name -Source $case.Source -Target $case.Target -ExpectedExitCode 0
     $patched928 = [IO.File]::ReadAllText($result.AssetPath)
@@ -309,6 +313,11 @@ try {
       $behavior = $patched928.Replace('const send=(c,p)=>p;', 'let sent;const send=(c,p)=>{sent=p};const logger={info(){}};') + 'notify({mcpAppsBrowserUse:false,computerUse:false,browserExtensions:false},false,"win32","test","26.928");if(sent.inAppBrowserUse!==true||sent.inAppBrowserUseAllowed!==true||sent.browserPane!==true||sent.externalBrowserUse!==true||sent.externalBrowserUseAllowed!==true||sent.mcpAppsBrowserUse!==false||sent.computerUse!==false||sent.browserExtensions!==false)throw Error("sender fields changed incorrectly");'
     } else {
       $behavior = $patched928 + 'const [,sent]=resolve({mcpAppsBrowserUse:false,computerUse:false,browserExtensions:false},null,"linux");if(sent.inAppBrowserUse!==true||sent.inAppBrowserUseAllowed!==true||sent.browserPane!==true||sent.externalBrowserUse!==true||sent.externalBrowserUseAllowed!==true||sent.mcpAppsBrowserUse!==false||sent.computerUse!==false||sent.browserExtensions!==false)throw Error("receiver fields changed incorrectly");'
+    }
+    if ($case.Slot.Contains('dotBrowserUse:')) {
+      $behavior = $behavior.Replace('mcpAppsBrowserUse:false,', 'mcpAppsBrowserUse:false,dotBrowserUse:false,')
+      if (-not $case.Slot.Contains('mcpAppsBrowserUse:')) { $behavior = $behavior.Replace('sent.mcpAppsBrowserUse!==false||', '') }
+      $behavior += 'if(sent.dotBrowserUse!==false)throw Error("Dot field was changed");'
     }
     $behaviorFile = Join-Path $fixtureRoot ($case.Target + '-behavior.cjs')
     [IO.File]::WriteAllText($behaviorFile, $behavior)

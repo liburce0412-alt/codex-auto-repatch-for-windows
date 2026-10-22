@@ -47,6 +47,8 @@ const root = __dirname;
 let checks = 0;
 const request = 'async function bga(e,t){let n=await _ga(e,t);if(n!==`chatgpt`&&n!==`personalAccessToken`)return null;let r=await KPe(e,t,{priority:`critical`});return e.query.setData(Hd,{authMethod:n,hostId:t},r),oee(r)}';
 const ui = 'function KVi(e){let t=(0,qVi.c)(10),n=G(Li),r=e?.hostId??n,i=BYe(r),a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=Zs(Hd,s),u=!!i?.isLoading||a&&l,d;t[3]!==c||t[4]!==u||t[5]!==a?(d=a&&!u&&c!=null?oee(c):null,t[3]=c,t[4]=u,t[5]=a,t[6]=d):d=t[6];let f=d,p;return t[7]!==u||t[8]!==f?(p={serviceTierAccess:f,isLoading:u},t[7]=u,t[8]=f,t[9]=p):p=t[9],p}var qVi;';
+const requestBedrock = request.replace('&&n!==`personalAccessToken`)', '&&n!==`personalAccessToken`&&n!==`amazonBedrock`)');
+const uiBedrock = ui.replace('i?.authMethod===`personalAccessToken`', 'i?.authMethod===`personalAccessToken`||i?.authMethod===`amazonBedrock`');
 function patch(name, source, expected = 'patched') {
   const file = path.join(root, `fixture-${checks}.js`);
   fs.writeFileSync(file, source);
@@ -143,6 +145,14 @@ function checkUi(source) {
   assert.equal(patch('ui', patchedUi, 'already-patched'), patchedUi);
   assert.equal(patchedUi.replace('/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0', 'i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`'), ui);
   checkUi(patchedUi);
+  const patchedBedrockRequest = patch('request', requestBedrock);
+  assert.equal(patch('request', patchedBedrockRequest, 'already-patched'), patchedBedrockRequest);
+  assert.equal(patchedBedrockRequest, patchedRequest);
+  await checkRequest(patchedBedrockRequest);
+  const patchedBedrockUi = patch('ui', uiBedrock);
+  assert.equal(patch('ui', patchedBedrockUi, 'already-patched'), patchedBedrockUi);
+  assert.equal(patchedBedrockUi, patchedUi);
+  checkUi(patchedBedrockUi);
   for (const source of [request + request,request + patchedRequest,patchedRequest + patchedRequest,
     request.replace('hostId:t','hostId:other'),request.replace('oee(r)','oee(other)'),request.replace('return null','return!1')]) patch('request', source, 'reject');
   for (const source of [ui + ui,ui + patchedUi,patchedUi + patchedUi,
@@ -151,6 +161,15 @@ function checkUi(source) {
     ui + '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/const unknown=1;',
     patchedUi + '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/const unknown=1;',
     '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/const unknown=1;']) patch('ui', source, 'reject');
+  for (const source of [request + requestBedrock, requestBedrock + patchedRequest,
+    requestBedrock.replace('n!==`amazonBedrock`','other!==`amazonBedrock`'),
+    requestBedrock.replace('n!==`amazonBedrock`','n!==`unknownAuth`'),
+    requestBedrock.replace('n!==`amazonBedrock`','n!==`amazonBedrock`&&extra')]) patch('request', source, 'reject');
+  for (const source of [ui + uiBedrock, uiBedrock + patchedUi,
+    uiBedrock.replace('i?.authMethod===`amazonBedrock`','other?.authMethod===`amazonBedrock`'),
+    uiBedrock.replace('i?.authMethod===`amazonBedrock`','i?.authMethod===`unknownAuth`'),
+    uiBedrock.replace('i?.authMethod===`amazonBedrock`','i?.authMethod===`amazonBedrock`||extra'),
+    patchedUi.replace('/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0','/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0||extra')]) patch('ui', source, 'reject');
   const renamed = request.replaceAll('bga','request$').replaceAll('_ga','auth$').replaceAll('KPe','requirements$').replaceAll('oee','convert$');
   patch('request', renamed);
   if (process.argv[2]) {
@@ -159,8 +178,18 @@ function checkUi(source) {
     const second = patch('ui', first);
     assert.equal(patch('request', second, 'already-patched'), second);
     assert.equal(patch('ui', second, 'already-patched'), second);
-    assert.equal(second.replace('/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0','i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`')
-      .replace('let n=await _ga(e,t);let r=await KPe(e,t,{priority:`critical`})','let n=await _ga(e,t);if(n!==`chatgpt`&&n!==`personalAccessToken`)return null;let r=await KPe(e,t,{priority:`critical`})'), current);
+    function changedPiece(before, after) {
+      let start = 0, end = 0;
+      while (before[start] === after[start] && start < Math.min(before.length, after.length)) start++;
+      while (end < Math.min(before.length, after.length) - start && before[before.length - 1 - end] === after[after.length - 1 - end]) end++;
+      return {removed:before.slice(start, before.length - end), added:after.slice(start, after.length - end)};
+    }
+    const requestChange = changedPiece(current, first);
+    assert.equal(requestChange.added, '');
+    assert.match(requestChange.removed, /^if\(([A-Za-z_$][\w$]*)!==`chatgpt`&&\1!==`personalAccessToken`(?:&&\1!==`amazonBedrock`)?\)return null;$/);
+    const uiChange = changedPiece(first, second);
+    assert.equal(uiChange.added, '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0');
+    assert.match(uiChange.removed, /^([A-Za-z_$][\w$]*)\?\.authMethod===`chatgpt`\|\|\1\?\.authMethod===`personalAccessToken`(?:\|\|\1\?\.authMethod===`amazonBedrock`)?$/);
     checks++;
   }
   console.log(`SERVICE_TIER_ACCESS_PASSED checks=${checks}`);

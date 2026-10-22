@@ -3,7 +3,8 @@ param(
   [switch]$ResumePreparedBuild,
   [string]$PreparedOutputRoot,
   [string]$PreparedTranscriptPath,
-  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')
+  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
+  [switch]$KeepArtifacts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +92,7 @@ $payload = [ordered]@{
   ResumePreparedBuild = [bool]$ResumePreparedBuild
   PreparedTranscriptPath = if ($ResumePreparedBuild) { $PreparedTranscriptPath } else { $null }
   CustomModels = @($CustomModels)
+  KeepArtifacts = [bool]$KeepArtifacts
 }
 $payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 5 -Compress)))
 $bootstrap = @'
@@ -104,7 +106,8 @@ $payload = $payloadJson | ConvertFrom-Json
   -ExpectedPackageFullName $payload.ExpectedPackageFullName `
   -ResumePreparedBuild:([bool]$payload.ResumePreparedBuild) `
   -PreparedTranscriptPath $payload.PreparedTranscriptPath `
-  -CustomModels @($payload.CustomModels)
+  -CustomModels @($payload.CustomModels) `
+  -KeepArtifacts:([bool]$payload.KeepArtifacts)
 exit $LASTEXITCODE
 '@
 $bootstrap = $bootstrap.Replace('__PAYLOAD__', $payloadBase64)
@@ -128,6 +131,7 @@ if ($ResumePreparedBuild) {
   Write-Host "Recovery and build root: $outputRoot"
 }
 Write-Host "Transcript: $transcriptPath"
+Write-Host "Deployment state (written after installer identity checks): $transcriptPath.state.json"
 Write-Host 'The external installer will request normal Windows UAC consent. No task-scheduler or policy bypass is used.'
 
 if ($PSCmdlet.ShouldProcess($package.PackageFullName, 'Start independent elevated recoverable Model Experience repair')) {
@@ -137,5 +141,5 @@ if ($PSCmdlet.ShouldProcess($package.PackageFullName, 'Start independent elevate
     throw "UAC did not authorize the external repair process; Codex was not closed or changed. $($_.Exception.Message)"
   }
   Write-Host "Independent elevated installer started: pid=$($process.Id)"
-  Write-Host "Inspect transcript and retained recovery artifacts after Codex relaunch: $transcriptPath"
+  Write-Host "Inspect transcript and deployment state after Codex relaunch: $transcriptPath"
 }
