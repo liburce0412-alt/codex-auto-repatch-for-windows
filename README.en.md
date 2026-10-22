@@ -14,6 +14,8 @@ Reapply compatible local Codex Desktop patches after Microsoft Store updates, sh
 4. Install the exact artifact, restore user application data, finalize the repair and verify a stable Desktop window.
 5. Finish the update after installation, finalization and stable restart. Ordinary and historical cleanup run only on a separate user request: no automatic build/history scans, deletion or cleanup inventories. Retain valid shared SDK/ASAR caches.
 
+Automatic reinstalls also snapshot the current user's Codex startup preference, restore it after installation, and verify it by reading it back. A failed read or a preference change during backup blocks removal. Policy-controlled states are not overwritten. If a fresh install has not created the user preference registry key yet, restoration first verifies that the current user package and its manifest still register the same startup task, then recreates the key and restores the saved choice; an unregistered task blocks restoration. Older backups without a startup field still restore application data. Deploying these scripts does not change the current startup setting.
+
 Failures open one interactive CLI terminal by default. The `%USERPROFILE%\.codex\automation\disable-cli-fallback` marker disables that launch while retaining the failure status, recovery files and logs. A failed Store version is not retried repeatedly. Original signed Store recovery media is optional; application-data backup is mandatory. If installation fails after removal, Desktop may be unavailable until reinstalled through Microsoft Store; the workflow does not automatically redeploy Store as its fallback.
 
 Missing current CUA runtimes are restored directly from the installed official package using content streams, length and SHA-256 verification, and atomic publication. Matching runtimes are reused. This avoids waiting twenty minutes on stalled Desktop extraction while preserving packaging, signing and installation checks.
@@ -25,6 +27,8 @@ Signing recognizes the certificate's own EKU extension and reuses an existing va
 The next default-scope or full repack also adds browser profile import exception logging. Look for `Browser profile import exception` after a failure; exceptions use the existing sensitive logging channel without additional request or result logging. This aids diagnosis and is not a confirmed cookie-import fix. Updating the scripts alone does not start an installation or restart Desktop.
 
 ## Compatibility update
+
+2026-10-22: support the `dotBrowserUse` field introduced in `26.1016.8120.0`, which previously prevented Browser Use sender discovery. Full and scoped repacks recognize it during discovery, rewriting and repeat-run checks, preserving its value without enabling Dot browser access.
 
 The 2026-10-20 merge reaches upstream `4c318c4`, incorporating PRs #101–#103: occluded screenshot guidance, manual recoverable installation, optional Image-guided Assets discovery, and explicitly selected legacy-build cleanup. Manual builds and recovery packages stay under `%USERPROFILE%\Downloads\codex-msix-repack`; ASAR uses the short `%USERPROFILE%\.codex\cwp-tmp` directory without redirecting TEMP, TMP or npm caches. Successful runs retain artifacts; cleanup requires a separate request. Existing automatic handoff paths remain unchanged. Strict verification now accepts multiple verified runtime copies of the same official package without changing existing runtime paths. The [validation record](references/upstream-20261020-merge.md) separates source checks from live acceptance.
 

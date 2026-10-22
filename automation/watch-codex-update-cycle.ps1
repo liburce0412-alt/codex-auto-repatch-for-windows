@@ -1111,12 +1111,13 @@ function Invoke-RemoveCodexAppxPackage {
   . (Join-Path $automationRoot 'codex-appdata-backup.ps1')
   $dataRoot = Join-Path $env:LOCALAPPDATA 'Packages\OpenAI.Codex_2p2nqsd0c76g0'
   $backupRoot = Join-Path $installRequestRoot 'appdata-backup'
-  Save-CodexAppDataBackup -DataRoot $dataRoot -BackupRoot $backupRoot -PackageFullName $Package.PackageFullName
-  [void](Assert-CodexAppDataBackup $backupRoot)
+  Save-CodexAppDataBackup -DataRoot $dataRoot -BackupRoot $backupRoot -PackageFullName $Package.PackageFullName -PreserveStartupTask
+  $backup = Assert-CodexAppDataBackup $backupRoot
   [void](Write-InstallHandoffState -Status 'installing' -Details @{appdata_backup=$backupRoot})
   Write-CycleLog 'package application data snapshot verified; removing exact current-user Store package'
   # PreserveApplicationData is supported only for loose-file development apps.
   # Store removal is permitted only after the mandatory data snapshot above.
+  Assert-CodexStartupTaskUnchanged $backup.startup_task
   Remove-AppxPackage -Package $Package.PackageFullName -ErrorAction Stop
 }
 

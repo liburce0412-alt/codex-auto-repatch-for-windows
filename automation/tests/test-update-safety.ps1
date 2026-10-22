@@ -1,7 +1,8 @@
+param([string]$WatcherPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'watch-codex-update-cycle.ps1'))
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $automation = Split-Path -Parent $PSScriptRoot
-$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $automation 'watch-codex-update-cycle.ps1'), [ref]$null, [ref]$null)
+$ast = [Management.Automation.Language.Parser]::ParseFile($WatcherPath, [ref]$null, [ref]$null)
 $testRoot = Join-Path $PSScriptRoot ('fixture-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 function Import-WatcherFunction([string]$Name) {
@@ -23,20 +24,32 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   $script:sideEffects = 0
   $script:signature='Store'
   $script:badPatch=$false
+  $script:restoreFailure=$false
+  $script:restoreCalls=0
+  $script:handoffStatus='prepared'
   [IO.File]::WriteAllText((Join-Path $testRoot 'start-codex-cli-fallback.ps1'), 'function Get-VerifiedFallbackCli { return $true }')
-  function Assert-PreparedInstallHandoff { if($script:badPatch){throw 'invalid patched artifact'}; @{ Record=@{status='prepared'}; ArtifactSha256='fixture'; ArtifactPath='fixture.msix' } }
+  function Assert-PreparedInstallHandoff { if($script:badPatch){throw 'invalid patched artifact'}; @{ Record=@{status=$script:handoffStatus}; ArtifactSha256='fixture'; ArtifactPath='fixture.msix' } }
   function Get-CodexPackage { @{SignatureKind=$script:signature;Version='26.917.9434.0';PackageFullName='expected'} }
   function Test-ExpectedPackage { $true }
   function Test-CompletePackage { $true }
   function Stop-CodexPackageProcesses { $script:sideEffects++ }
   function Invoke-RemoveCodexAppxPackage { $script:sideEffects++ }
   function Invoke-AddCodexAppxPackage { $script:sideEffects++; $script:signature='Developer' }
-  function Restore-PreparedPackageData { }
+  function Restore-PreparedPackageData { $script:restoreCalls++; if($script:restoreFailure){throw 'startup restore failed'} }
   function Write-InstallHandoffState { }
   function Write-CycleLog { }
   function Assert-CodexMachineSigningTrust { }
   $installed=Install-PreparedCodexPackage @{}
   Assert ($installed.SignatureKind -eq 'Developer' -and $script:sideEffects -eq 3) 'optional recovery still blocked valid installation'
+  Assert ($script:restoreCalls -eq 1) 'fresh install did not restore saved data and startup choice'
+  $script:handoffStatus='installed-awaiting-finalize'; $script:sideEffects=0
+  $installed=Install-PreparedCodexPackage @{}
+  Assert ($script:restoreCalls -eq 2 -and $script:sideEffects -eq 0) 'resume did not restore saved data without repeating installation'
+  $script:restoreFailure=$true
+  Assert-Throws { Install-PreparedCodexPackage @{} } 'startup restore failed'
+  $script:handoffStatus='prepared'; $script:signature='Store'
+  Assert-Throws { Install-PreparedCodexPackage @{} } 'startup restore failed'
+  $script:restoreFailure=$false
   $script:sideEffects=0; $script:signature='Store'; $script:badPatch=$true
   Assert-Throws { Install-PreparedCodexPackage @{} } 'invalid patched artifact'
   Assert ($script:sideEffects -eq 0) 'invalid patched artifact caused side effects'
@@ -53,8 +66,14 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   [IO.File]::WriteAllText((Join-Path $testRoot 'codex-appdata-backup.ps1'), '# fixture: use mocks defined in this scope')
   $script:removalCalls = 0
   $script:backupFailure = $true
-  function Save-CodexAppDataBackup { if($script:backupFailure){throw 'backup failed'} }
-  function Assert-CodexAppDataBackup { }
+  function Save-CodexAppDataBackup {
+    param($DataRoot,$BackupRoot,$PackageFullName,[switch]$PreserveStartupTask)
+    Assert $PreserveStartupTask 'startup choice was not included before package removal'
+    if($script:backupFailure){throw 'backup failed'}
+  }
+  function Assert-CodexAppDataBackup { @{startup_task=@{state=1}} }
+  $script:startupChanged = $false
+  function Assert-CodexStartupTaskUnchanged { if($script:startupChanged){throw 'startup preference changed'} }
   function Write-InstallHandoffState { }
   function Write-CycleLog { }
   function Remove-AppxPackage { param($Package,[switch]$PreserveApplicationData,$ErrorAction)
@@ -64,6 +83,10 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   Assert-Throws { Invoke-RemoveCodexAppxPackage @{PackageFullName='fixture'} } 'backup failed'
   Assert ($script:removalCalls -eq 0) 'Store uninstall occurred before a verified data backup'
   $script:backupFailure=$false
+  $script:startupChanged=$true
+  Assert-Throws { Invoke-RemoveCodexAppxPackage @{PackageFullName='fixture'} } 'startup preference changed'
+  Assert ($script:removalCalls -eq 0) 'Store uninstall occurred after the startup choice changed'
+  $script:startupChanged=$false
   Invoke-RemoveCodexAppxPackage @{PackageFullName='fixture'}
   Assert ($script:removalCalls -eq 1) 'Store uninstall did not run after a verified backup'
 }
