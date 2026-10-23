@@ -22,6 +22,8 @@ function Reset-Registry([int]$State = 2) {
   $script:writes = 0
   $script:reads = 0
   $script:readError = 0
+  $script:valueReadError = 0
+  $script:readErrorAfterCreate = 0
   $script:writeError = 0
   $script:wrongType = $false
   $script:ignoreWrites = $false
@@ -69,7 +71,9 @@ function Invoke-CimMethod {
     }
     'GetDWORDValue' {
       if ($Arguments.sValueName -notin @('State','UserEnabledStartupOnce')) { throw 'unexpected value read' }
-      if ($null -eq $script:registry -or -not $script:registry.ContainsKey($Arguments.sValueName)) { return @{ReturnValue=2} }
+      if ($script:valueReadError -and $Arguments.sValueName -eq 'State') { return @{ReturnValue=$script:valueReadError} }
+      if ($null -eq $script:registry) { return @{ReturnValue=2} }
+      if (-not $script:registry.ContainsKey($Arguments.sValueName)) { return @{ReturnValue=1} }
       return @{ReturnValue=0;uValue=$script:registry[$Arguments.sValueName]}
     }
     'CreateKey' {
@@ -78,6 +82,7 @@ function Invoke-CimMethod {
       if ($script:createError) { return @{ReturnValue=$script:createError} }
       if ($null -eq $script:registry) { $script:registry=@{} }
       if ($script:policyOnCreate) { $script:registry.State=[long]$script:policyOnCreate }
+      if ($script:readErrorAfterCreate) { $script:readError=$script:readErrorAfterCreate }
       return @{ReturnValue=0}
     }
     'SetDWORDValue' {
@@ -162,6 +167,51 @@ try {
     }
     Reject { Restore-CodexStartupTaskSnapshot $snapshot } '*task is missing*'
     Assert ($script:writes -eq 0 -and $script:creates -eq 0) "invalid $invalid registered a startup preference"
+  }
+  Reset-Registry 1
+  $script:registry.UserEnabledStartupOnce=1L
+  $snapshot = Get-CodexStartupTaskSnapshot
+  Reset-Registry
+  $script:registry=@{}
+  $script:packageCount=1
+  Restore-CodexStartupTaskSnapshot $snapshot
+  Assert ($script:registry.State -eq 1 -and $script:registry.UserEnabledStartupOnce -eq 1 -and $script:packageQueries -eq 1) 'existing empty startup key was not restored through registered-task verification'
+  foreach ($invalid in 'package','task') {
+    Reset-Registry 1
+    $snapshot = Get-CodexStartupTaskSnapshot
+    $script:registry=@{}
+    if ($invalid -eq 'task') { $script:packageCount=1; $script:startupTaskId='Other' }
+    Reject { Restore-CodexStartupTaskSnapshot $snapshot } '*task is missing*'
+    Assert ($script:writes -eq 0 -and $script:creates -eq 0 -and $script:packageQueries -eq 1) "empty key with invalid $invalid bypassed registered-task verification"
+  }
+  Reset-Registry
+  $script:registry=@{}
+  $emptyBackup = Join-Path $root 'empty-startup-backup'
+  Reject { Save-CodexAppDataBackup 'absent' $emptyBackup 'fixture' -PreserveStartupTask } '*without State*'
+  Assert ($script:writes -eq 0 -and -not (Test-Path -LiteralPath $emptyBackup)) 'empty startup key produced a valid-looking backup'
+  foreach ($name in 'UserEnabledStartupOnce','OtherValue') {
+    Reset-Registry 1
+    $snapshot = Get-CodexStartupTaskSnapshot
+    $script:registry=@{}
+    $script:registry[$name]=0L
+    $script:packageCount=1
+    Reject { Restore-CodexStartupTaskSnapshot $snapshot } '*without State*'
+    Assert ($script:writes -eq 0 -and $script:creates -eq 0) "nonempty key containing $name was treated as an empty startup key"
+  }
+  foreach ($code in 1,5) {
+    Reset-Registry 1
+    $snapshot = Get-CodexStartupTaskSnapshot
+    Reset-Registry 2
+    $script:valueReadError=$code
+    Reject { Restore-CodexStartupTaskSnapshot $snapshot } "*cannot read Codex startup value: State ($code)*"
+    Assert ($script:writes -eq 0 -and $script:creates -eq 0) "enumerated State read failure $code was treated as a missing value"
+    Reset-Registry 1
+    $snapshot = Get-CodexStartupTaskSnapshot
+    $script:registry=$null
+    $script:packageCount=1
+    $script:readErrorAfterCreate=$code
+    Reject { Restore-CodexStartupTaskSnapshot $snapshot } "*cannot read Codex startup task: $code*"
+    Assert ($script:creates -eq 1 -and $script:writes -eq 0) "failed enumeration $code after CreateKey initialized a startup value"
   }
   foreach ($policy in 3,4) {
     foreach ($during in 'manifest','create') {

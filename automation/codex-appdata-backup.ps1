@@ -18,6 +18,7 @@ function Invoke-CodexStartupRegistry {
 }
 
 function Get-CodexStartupTaskSnapshot {
+  param([switch]$AllowEmptyKey)
   $snapshot = [pscustomobject]@{
     sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     state = $null
@@ -26,6 +27,7 @@ function Get-CodexStartupTaskSnapshot {
   $values = Invoke-CodexStartupRegistry -Method EnumValues
   if ($values.ReturnValue -eq 2) { return $snapshot }
   if ($values.ReturnValue -ne 0) { throw "cannot read Codex startup task: $($values.ReturnValue)" }
+  if ($AllowEmptyKey -and @($values.sNames | Where-Object { $null -ne $_ }).Count -eq 0) { return $snapshot }
   foreach ($pair in @(@('State','state'), @('UserEnabledStartupOnce','user_enabled_once'))) {
     $index = [Array]::IndexOf(@($values.sNames), $pair[0])
     if ($index -lt 0) {
@@ -75,7 +77,7 @@ function Restore-CodexStartupTaskSnapshot {
   Assert-CodexStartupTaskSnapshot $Snapshot
   # No choice existed, or it was policy-controlled: do not invent a preference.
   if ($null -eq $Snapshot.state -or $Snapshot.state -in @(3,4)) { return }
-  $current = Get-CodexStartupTaskSnapshot
+  $current = Get-CodexStartupTaskSnapshot -AllowEmptyKey
   if ($null -eq $current.state) {
     # A fresh installation may register the task before creating its user preference key.
     $packages = @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop)
@@ -85,16 +87,15 @@ function Restore-CodexStartupTaskSnapshot {
     $manifest = Get-AppxPackageManifest -Package $packages[0].PackageFullName -ErrorAction Stop
     $tasks = $manifest.SelectNodes('/*[local-name()="Package"]/*[local-name()="Applications"]/*[local-name()="Application" and @Id="App"]/*[local-name()="Extensions"]/*[local-name()="Extension" and @Category="windows.startupTask"]/*[local-name()="StartupTask" and @TaskId="App"]')
     if ($tasks.Count -ne 1) { throw 'installed Codex startup task is missing from the registered manifest' }
-    $current = Get-CodexStartupTaskSnapshot
+    $current = Get-CodexStartupTaskSnapshot -AllowEmptyKey
     if ($null -eq $current.state) {
       $result = Invoke-CodexStartupRegistry -Method CreateKey
       if ($result.ReturnValue -ne 0) { throw "cannot restore Codex startup key: $($result.ReturnValue)" }
-      $state = Invoke-CodexStartupRegistry -Method GetDWORDValue -Name State
-      if ($state.ReturnValue -eq 2) {
+      # Missing DWORDs can return 1; only successful enumeration proves absence.
+      $current = Get-CodexStartupTaskSnapshot -AllowEmptyKey
+      if ($null -eq $current.state) {
         $result = Invoke-CodexStartupRegistry -Method SetDWORDValue -Name State -Value $Snapshot.state
         if ($result.ReturnValue -ne 0) { throw "cannot restore Codex startup value: State ($($result.ReturnValue))" }
-      } elseif ($state.ReturnValue -ne 0) {
-        throw "cannot read Codex startup value: State ($($state.ReturnValue))"
       }
       $current = Get-CodexStartupTaskSnapshot
     }
