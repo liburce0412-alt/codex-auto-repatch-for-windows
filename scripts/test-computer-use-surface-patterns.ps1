@@ -235,11 +235,11 @@ $nativeGate = 'p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform=
 $nativeSource = $modernSource.Replace('p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null', $nativeGate)
 $native = Invoke-PatcherFixture -Name 'native-windows-surface' -Source $nativeSource -ExpectedExitCode 0
 $nativePatched = [IO.File]::ReadAllText($native.AssetPath)
-if ($native.Output -cne 'patched' -or -not $nativePatched.Contains($nativeGate) -or -not $nativePatched.Contains($modernReadiness)) {
+if ($native.Output -cne 'already-open-native-windows' -or $nativePatched -cne $nativeSource) {
   throw 'native Windows surface or readiness predicate was changed'
 }
 $nativeRepeat = Invoke-PatcherFixture -Name 'native-windows-repeat' -Source $nativePatched -ExpectedExitCode 0
-if ($nativeRepeat.Output -cne 'already-patched' -or [IO.File]::ReadAllText($nativeRepeat.AssetPath) -cne $nativePatched) {
+if ($nativeRepeat.Output -cne 'already-open-native-windows' -or [IO.File]::ReadAllText($nativeRepeat.AssetPath) -cne $nativePatched) {
   throw 'native Windows surface patch is not idempotent'
 }
 & $node.Source --check $native.AssetPath

@@ -919,6 +919,14 @@ Accept the separate modern layout only when the complete shared readiness predic
 
 The surface fixture suite covers 304 modern platform/readiness combinations for the original and renamed helpers, plus the existing 120 legacy combinations, migration, idempotency, corrupt or duplicate readiness anchors, target selection, and unchanged refusal of partial or ambiguous patches. The original contributor validated a full dry-run, signing, installation, real native screenshots, and browser reads on `26.917.6896.0`. The subsequent `n.Wu` compatibility correction was checked against the actual `26.917.9434.0` bundle with syntax and repeat-run validation; this is separate from Desktop installation or screenshot acceptance.
 
+## Desktop 26.1021 Ships Native Windows CUA and Moves the Power Slider
+
+On the exact Store package `26.1021.2667.0`, `main-Dk6YMjS1.js` already admits Windows in the CUA surface expression. It requires shared readiness, `computerUse`, and the installed computer plugin's `enabled` result; Darwin additionally requires `serviceAppPath`. The surviving Darwin-only condition belongs to legacy skill reconciliation. The surface patcher recognizes the complete native expression together with the unchanged readiness predicate and returns `already-open-native-windows` without writing either condition. Mixed markers, duplicate gates, missing conditions and mismatched locals are rejected.
+
+The Power slider moved into `app-primary` and no longer carries `harborEnabled` or `ModelPickerPowerSliderImpl`. Discovery also recognizes the existing `composer.modelPicker.power` plus `PowerSlider` witnesses when the harbor gate is absent. The existing Power patcher leaves that asset unchanged. Goal discovery skips translation-only label files before running command-gate expressions, avoiding expensive unmatched regex scans while retaining legacy gate witnesses.
+
+Run `test-computer-use-surface-patterns.ps1` and `test-native-layout-discovery.ps1 -TemporaryRoot <local-test-root> -CurrentExtractDir <extracted-asar>`. The latter reads the current asset set and checks the native slider remains byte-identical. These checks and a full DryRun establish compatibility of the selected bundle; installed-package and runtime acceptance remain separate.
+
 ## CUA Requests Time Out After Proxy Variables Are Removed
 
 On Desktop `26.915.4065.0`, native app enumeration can work and Chrome can connect while tab creation or listing fails with `nodeRepl.fetch request failed`. Compare the actual `cua_repl` child process environment with its app-server parent. Checking `codex-computer-use-swift.exe` alone does not test the process that performs the request.

@@ -2020,7 +2020,7 @@ const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
 const marker = 'CODEX_CUA_WINDOWS_SURFACE_V1';
 
-// Older Desktop bundles carry two independent Darwin-only checks: one for
+// Current Desktop bundles carry two independent Darwin-only checks: one for
 // exposing the computer-use plugin and one for generating the CUA surface list.
 // The Windows helper is supplied by the local CUA runtime, so both checks must
 // admit win32 before the plugin can expose the window-based cua.computer API.
@@ -2033,8 +2033,8 @@ const id = '[A-Za-z_$][\\w$]*';
 const originalPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&(${id})\\.platform!==\`darwin\`\\)return null;`, 'g');
 const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&\\((${id})\\.platform!==\`darwin\`&&\\4\\.platform!==\`win32\`\\)\\)return null;`, 'g');
 const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
-// Desktop 26.1021 admits Windows natively; preserve its plugin-enabled check.
-const nativeSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
+// Desktop 26.1021 ships a native Windows surface with its own plugin guard.
+const nativeWindowsSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
 const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
 const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
 const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
@@ -2074,19 +2074,22 @@ function countRe(re, source = text) {
 }
 
 const pluginCount = countRe(originalPluginGateRe);
-const originalSurfaceCount = countRe(originalSurfaceGateRe);
-const nativeSurfaceCount = countRe(nativeSurfaceGateRe);
-const surfaceCount = originalSurfaceCount + nativeSurfaceCount;
+const surfaceCount = countRe(originalSurfaceGateRe);
 const markerCount = count(marker);
 const patchedPluginCount = countRe(patchedPluginGateRe);
 const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
 const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
-if (markerCount || patchedPluginCount || patchedSurfaceCount) {
-  if (markerCount === 1 && patchedPluginCount === 1 && pluginCount === 0 &&
-      nativeSurfaceCount === 1 && originalSurfaceCount === 0 && patchedSurfaceCount === 0 && modernLayout) {
-    process.stdout.write('already-patched');
+const nativeSurfaceCount = countRe(nativeWindowsSurfaceGateRe);
+if (nativeSurfaceCount) {
+  if (nativeSurfaceCount === 1 && modernLayout && pluginCount === 1 &&
+      surfaceCount === 0 && markerCount === 0 && patchedPluginCount === 0 && patchedSurfaceCount === 0) {
+    process.stdout.write('already-open-native-windows');
     process.exit(0);
   }
+  process.stderr.write('incomplete or ambiguous native Windows CUA surface; refusing to modify the asset\n');
+  process.exit(2);
+}
+if (markerCount || patchedPluginCount || patchedSurfaceCount) {
   if (markerCount === 1 && patchedPluginCount === 1 &&
       patchedSurfaceCount === 1 && pluginCount === 0 && surfaceCount === 0 &&
       (legacyLayout || modernLayout)) {
@@ -2116,14 +2119,13 @@ if (pluginCount !== 1 || surfaceCount !== 1) {
   process.stderr.write(`current CUA surface anchors not found exactly once: plugin=${pluginCount} surface=${surfaceCount}\n`);
   process.exit(2);
 }
-if ((!legacyLayout && !modernLayout) || (nativeSurfaceCount && !modernLayout)) {
+if (!legacyLayout && !modernLayout) {
   process.stderr.write('unsupported or ambiguous CUA readiness predicate; refusing to modify the asset\n');
   process.exit(2);
 }
 
 const layout = modernLayout ? 'modern' : 'legacy';
-const expectedSurfaceGateRe = nativeSurfaceCount ? nativeSurfaceGateRe :
-  modernLayout ? modernPatchedSurfaceGateRe : legacyPatchedSurfaceGateRe;
+const expectedSurfaceGateRe = modernLayout ? modernPatchedSurfaceGateRe : legacyPatchedSurfaceGateRe;
 const next = text
   .replace(originalPluginGateRe, (match, p, i, a, e) => buildPluginGate(p, i, a, e))
   .replace(originalSurfaceGateRe, (match, result, flag, platform, features, state) =>
@@ -2507,7 +2509,8 @@ function Find-PatchTargets {
   if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
-      if ($text.Contains('ModelPickerPowerSliderImpl')) {
+      if ($text.Contains('ModelPickerPowerSliderImpl') -or
+          ((Split-Path -Leaf $candidate) -like 'app-primary-*.js' -and $text.Contains('ModelPickerPowerSlider') -and $text.Contains('canRenderPowerPickerSurface'))) {
         $powerSliderTarget = $candidate
         break
       }
@@ -2645,6 +2648,9 @@ function Find-PatchTargets {
   $goalComposerTarget = $null
   foreach ($candidate in (Invoke-RgList $RgPath 'threadGoalObjective|composer.goalSlashCommand.title' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
+    # Translation bundles carry the label but cannot contain a command gate.
+    if (-not $text.Contains('threadGoalObjective') -and -not $text.Contains('id:`goal`') -and
+        -not $text.Contains('3074100722') -and -not $text.Contains('!==`cloud`')) { continue }
     if (($text.Contains('3074100722') -and $text.Contains('goals')) -or
         ($text.Contains('composer.goalSlashCommand.title') -and $text -match 'id:`goal`,title:[^,]+,description:[^,]+,requiresEmptyComposer:!1,[^}]*enabled:[^,]+') -or
         ($text.Contains('composer.goalSlashCommand.title') -and $text -match '[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*!==`cloud`&&!?[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\?!1') -or
@@ -3057,7 +3063,8 @@ function Invoke-PatchAppAsar {
     if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
       foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
         $text = Get-Content -Raw -LiteralPath $candidate
-        if ($text.Contains('ModelPickerPowerSliderImpl')) {
+        if ($text.Contains('ModelPickerPowerSliderImpl') -or
+          ((Split-Path -Leaf $candidate) -like 'app-primary-*.js' -and $text.Contains('ModelPickerPowerSlider') -and $text.Contains('canRenderPowerPickerSurface'))) {
           $powerSliderTarget = $candidate
           break
         }

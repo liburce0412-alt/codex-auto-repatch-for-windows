@@ -21,6 +21,7 @@ const PROFILES = [
 ];
 
 const OFFERS_PROFILE = {
+  comparator: 'fn', parser: 'pn', logger: 'vn', manifest: 'Sn', packageInfo: 'Cn',
   required: [
     'if(fn(n.buildVersion,this.options.buildVersion)>0)t=n.buildVersion;',
     'r=fn(n,this.options.buildVersion)>0;',
@@ -41,6 +42,22 @@ const OFFERS_PROFILE = {
   ],
 };
 
+function versionDefinitions(compare, parse) {
+  return `function ${compare}(e,t){let n=${parse}(e),r=${parse}(t),i=Math.max(n.length,r.length);for(let e=0;e<i;e+=1){let t=n[e]??0,i=r[e]??0;if(t!==i)return t-i}return 0}function ${parse}(e){let t=e.trim().split(\`.\`);if(t.some(e=>!/^\\d+$/.test(e)))throw Error(\`Invalid build version '\${e}'.\`);return t.map(e=>Number.parseInt(e,10))}`;
+}
+
+OFFERS_PROFILE.versionDefinitions = versionDefinitions('fn', 'pn');
+OFFERS_PROFILE.required.push(OFFERS_PROFILE.versionDefinitions);
+const OFFERS_PROFILES = [OFFERS_PROFILE, {
+  comparator: 'un', parser: 'dn', logger: 'gn', manifest: 'bn', packageInfo: 'yn',
+  versionDefinitions: versionDefinitions('un', 'dn'),
+  required: OFFERS_PROFILE.required.map(fragment => fragment.replaceAll('fn(', 'un(').replaceAll('pn(', 'dn(')),
+  changes: OFFERS_PROFILE.changes.map(change => ({
+    original: change.original,
+    replacement: change.replacement.replaceAll('fn(', 'un('),
+  })),
+}];
+
 function patchText(source) {
   if (!source.includes('windows-store-updater') || !source.includes('msixFallbackUpdater') ||
       !source.includes('checkForUpdatesWithFallbackDecision') ||
@@ -50,8 +67,11 @@ function patchText(source) {
     throw new Error('Unsupported Windows updater layout; no files changed');
   }
   const count = fragment => source.split(fragment).length - 1;
-  const variants = [...PROFILES.map(profile => [profile]), OFFERS_PROFILE.changes];
-  const supported = changes => changes !== OFFERS_PROFILE.changes || OFFERS_PROFILE.required.every(fragment => count(fragment) === 1);
+  const variants = [...PROFILES.map(profile => [profile]), ...OFFERS_PROFILES.map(profile => profile.changes)];
+  const supported = changes => {
+    const offers = OFFERS_PROFILES.find(profile => profile.changes === changes);
+    return !offers || offers.required.every(fragment => count(fragment) === 1);
+  };
   if (source.includes(MARKER)) {
     const noOriginals = !variants.some(changes => changes.some(change => count(change.original) !== 0));
     const patched = variants.filter(changes => supported(changes) && changes.every(change => count(change.replacement) === 1));
@@ -67,7 +87,8 @@ function patchText(source) {
     throw new Error('Partial or ambiguous Windows updater patch; no files changed');
   }
   const profiles = variants.filter(changes => supported(changes) && changes.every(change => count(change.original) === 1));
-  const originalCount = variants.reduce((sum, changes) => sum + changes.reduce((total, change) => total + count(change.original), 0), 0);
+  const originals = [...new Set(variants.flatMap(changes => changes.map(change => change.original)))];
+  const originalCount = originals.reduce((total, fragment) => total + count(fragment), 0);
   if (profiles.length !== 1 || originalCount !== profiles[0].length) {
     throw new Error('Expected exactly one Windows Store NoUpdates branch; no files changed');
   }
@@ -95,4 +116,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = {patchText, ORIGINAL, REPLACEMENT, MARKER, PROFILES, OFFERS_PROFILE};
+module.exports = {patchText, ORIGINAL, REPLACEMENT, MARKER, PROFILES, OFFERS_PROFILE, OFFERS_PROFILES};
