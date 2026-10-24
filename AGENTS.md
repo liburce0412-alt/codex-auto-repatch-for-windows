@@ -8,6 +8,7 @@
 
 ## Before Editing
 
+- For explicitly requested upstream reviews, follow `SKILL.md` Explicit-Only GitHub Update Policy and `references/remote-review-and-publication.md`. Preserve the disabled automatic-sync preference, reuse covered fixes, validate applicable changes, and record publication results without duplicate PRs.
 - Inspect the current branch, working tree, and remote before making changes.
 - Preserve user changes. Do not discard, overwrite, or reset uncommitted work unless the user explicitly asks for it.
 - Prefer a dedicated `codex/` branch for non-trivial work.
