@@ -26,6 +26,9 @@
 - `scripts/test-windows-store-update-fallback.cjs`: passed against actual `bootstrap-DbqNeN1Q.js`, including the shipped `un`/`dn` comparator, original NoUpdates failure, manual/background/cached fallback, wrong identity/publisher, missing feed, and mixed-profile rejection.
 - `scripts/test-msix-safe-install.ps1`: 58 checks passed, including resource-boundary preservation without another deployment.
 - `scripts/test-computer-use-helper-win10-patch.ps1`: two locally available exact 0.7.12 profiles passed on disposable copies, including candidate hashes, rollback, and the Windows 11 install guard. Other newly added profiles were not executed without matching source bytes.
+- `scripts/test-asar-integrity.ps1 -CheckInstalledPackage`: 15 cases passed under Windows PowerShell 5.1, including the current installed Store package's read-only integrity check.
+- `scripts/test-staged-package-selection.ps1`: passed. `scripts/test-custom-model-visibility-patterns.ps1`: passed, including 5,760 access-program behavior combinations.
+- The existing Windows SDK MakeAppx help confirms `/ml` is a supported byte-based memory limit, matching upstream's new packing argument.
 - PowerShell parsing, changed CommonJS syntax, and `git diff --check`: passed.
 
 ## Acceptance boundary
