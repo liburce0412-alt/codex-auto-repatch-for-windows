@@ -19,6 +19,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'codex-cli-environment.ps1')
 
 $AutomationRoot = Join-Path $env:USERPROFILE '.codex\automation'
 $LogRoot = Join-Path $AutomationRoot 'logs'
@@ -569,60 +570,6 @@ function Sync-StableIcon {
   return $finalHash
 }
 
-function Publish-UserEnvironmentChange {
-  $windowsPowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) {
-    throw "Windows PowerShell is required to publish the user environment change: $windowsPowerShell"
-  }
-
-  $broadcastScript = @'
-$ErrorActionPreference = 'Stop'
-if (-not ('Codex.PostUpdate.NativeMethods' -as [type])) {
-  Add-Type -TypeDefinition @"
-namespace Codex.PostUpdate {
-  using System;
-  using System.Runtime.InteropServices;
-
-  public static class NativeMethods {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern IntPtr SendMessageTimeout(
-      IntPtr hWnd,
-      uint Msg,
-      UIntPtr wParam,
-      string lParam,
-      uint fuFlags,
-      uint uTimeout,
-      out UIntPtr lpdwResult
-    );
-  }
-}
-"@
-}
-
-$result = [UIntPtr]::Zero
-[void][Codex.PostUpdate.NativeMethods]::SendMessageTimeout(
-  [IntPtr]0xffff,
-  0x001A,
-  [UIntPtr]::Zero,
-  'Environment',
-  0x0002,
-  5000,
-  [ref]$result
-)
-'@
-  $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($broadcastScript))
-  $publish = Invoke-LoggedProcess -Label 'publish-user-environment' -FilePath $windowsPowerShell -ArgumentList @(
-    '-NoProfile',
-    '-NonInteractive',
-    '-WindowStyle', 'Hidden',
-    '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', $encodedCommand
-  )
-  if ($publish.ExitCode -ne 0) {
-    throw "failed to publish the user environment change: $($publish.Combined)"
-  }
-}
-
 function Sync-StableCodexCli {
   param(
     [string]$SourceAppPath,
@@ -687,13 +634,7 @@ function Sync-StableCodexCli {
   }
 
   $destinationPath = Join-Path $destinationRoot 'codex.exe'
-  $currentUserValue = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'User')
-  if ($currentUserValue -ine $destinationPath) {
-    [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $destinationPath, 'User')
-    Publish-UserEnvironmentChange
-    Write-RepairLog "user CODEX_CLI_PATH updated: $destinationPath"
-  }
-  $env:CODEX_CLI_PATH = $destinationPath
+  Set-CodexCliOverride -Path $destinationPath
 
   return [pscustomobject]@{
     Path = $destinationPath

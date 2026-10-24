@@ -1,4 +1,6 @@
 # Functions only; launching is explicit so read-only validation can import this.
+. (Join-Path $PSScriptRoot 'codex-cli-environment.ps1')
+
 function Initialize-CodexFallbackCli {
   $package = Get-AppxPackage -Name OpenAI.Codex -PackageTypeFilter Main | Sort-Object Version -Descending | Select-Object -First 1
   if (-not $package -or $package.PackageFamilyName -ne 'OpenAI.Codex_2p2nqsd0c76g0' -or
@@ -26,7 +28,9 @@ function Initialize-CodexFallbackCli {
   $state['stable_cli_runtime_hashes'] = $hashes
   [IO.File]::WriteAllText("$statePath.$PID.tmp", ($state | ConvertTo-Json -Depth 12))
   [IO.File]::Move("$statePath.$PID.tmp", $statePath, $true)
-  return Get-VerifiedFallbackCli
+  $cli = Get-VerifiedFallbackCli
+  Set-CodexCliOverride -Path $cli.Path
+  return $cli
 }
 
 function Get-VerifiedFallbackCli {

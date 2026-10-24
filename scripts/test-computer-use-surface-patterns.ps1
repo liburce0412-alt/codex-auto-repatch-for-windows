@@ -230,6 +230,41 @@ $renamedGateRepeat = Invoke-PatcherFixture -Name 'modern-renamed-gate-repeat' -S
 if ($renamedGateRepeat.Output -cne 'already-patched') { throw 'renamed gate patch is not idempotent' }
 Write-Output 'CUA_RENAMED_GATE_LOCALS_PASSED'
 
+# Desktop 26.1021 already admits Windows but still requires the enabled plugin.
+$nativeGate = 'p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform===`darwin`&&u.paths.serviceAppPath!=null)'
+$nativeSource = $modernSource.Replace('p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null', $nativeGate)
+$native = Invoke-PatcherFixture -Name 'native-windows-surface' -Source $nativeSource -ExpectedExitCode 0
+$nativePatched = [IO.File]::ReadAllText($native.AssetPath)
+if ($native.Output -cne 'patched' -or -not $nativePatched.Contains($nativeGate) -or -not $nativePatched.Contains($modernReadiness)) {
+  throw 'native Windows surface or readiness predicate was changed'
+}
+$nativeRepeat = Invoke-PatcherFixture -Name 'native-windows-repeat' -Source $nativePatched -ExpectedExitCode 0
+if ($nativeRepeat.Output -cne 'already-patched' -or [IO.File]::ReadAllText($nativeRepeat.AssetPath) -cne $nativePatched) {
+  throw 'native Windows surface patch is not idempotent'
+}
+& $node.Source --check $native.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'native Windows output syntax check failed' }
+$nativeBehaviorPath = Join-Path $fixtureRoot 'native-behavior.cjs'
+[IO.File]::WriteAllText($nativeBehaviorPath, @'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
+let cases = 0;
+for (const platform of ['darwin', 'win32', 'linux'])
+for (const ready of [false, true]) for (const computerUse of [false, true])
+for (const enabled of [false, true]) for (const serviceAppPath of [null, '/service']) {
+  const expected = ready && computerUse && enabled &&
+    (platform === 'win32' || platform === 'darwin' && serviceAppPath !== null);
+  assert.equal(context.buildSurface(ready, {platform}, {computerUse}, {enabled, paths:{serviceAppPath}}), expected);
+  cases++;
+}
+console.log(`NATIVE_WINDOWS_CUA_BEHAVIOR_PASSED cases=${cases}`);
+'@, [Text.UTF8Encoding]::new($false))
+& $node.Source $nativeBehaviorPath $native.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'native Windows readiness/plugin/platform behavior failed' }
+
 # Migrate complete earlier patches without mistaking their inserted flag for
 # evidence of a legacy host. Legacy hosts must regain their actual feature gate.
 $legacyGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)'
@@ -277,6 +312,13 @@ function Assert-RejectedUnchanged {
   }
 }
 
+Assert-RejectedUnchanged 'native-missing-enabled' ($nativeSource.Replace('u.enabled&&', ''))
+Assert-RejectedUnchanged 'native-mismatched-state' ($nativeSource.Replace('u.paths.serviceAppPath', 'other.paths.serviceAppPath'))
+Assert-RejectedUnchanged 'native-mismatched-platform' ($nativeSource.Replace('||l.platform', '||other.platform'))
+Assert-RejectedUnchanged 'native-unknown-readiness' ($nativeSource.Replace('t.browserUseTinysky', 't.unknownFlag'))
+Assert-RejectedUnchanged 'native-duplicate' ($nativeSource + $nativeSource)
+Assert-RejectedUnchanged 'native-mixed-old' ($nativeSource + $positiveSource)
+Assert-RejectedUnchanged 'native-patched-corrupt' ($nativePatched.Replace('u.enabled&&', ''))
 Assert-RejectedUnchanged 'modern-corrupt-readiness' ($modernPatched.Replace('t.browserUseTinysky', 't.unknownFlag'))
 Assert-RejectedUnchanged 'modern-duplicate-readiness' ($modernPatched + $modernReadiness)
 Assert-RejectedUnchanged 'original-modern-corrupt-readiness' ($modernSource.Replace('t.browserUseTinysky', 't.unknownFlag'))

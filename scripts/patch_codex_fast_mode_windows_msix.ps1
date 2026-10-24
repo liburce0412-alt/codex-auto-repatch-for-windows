@@ -2020,7 +2020,7 @@ const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
 const marker = 'CODEX_CUA_WINDOWS_SURFACE_V1';
 
-// Current Desktop bundles carry two independent Darwin-only checks: one for
+// Older Desktop bundles carry two independent Darwin-only checks: one for
 // exposing the computer-use plugin and one for generating the CUA surface list.
 // The Windows helper is supplied by the local CUA runtime, so both checks must
 // admit win32 before the plugin can expose the window-based cua.computer API.
@@ -2033,6 +2033,8 @@ const id = '[A-Za-z_$][\\w$]*';
 const originalPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&(${id})\\.platform!==\`darwin\`\\)return null;`, 'g');
 const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&\\((${id})\\.platform!==\`darwin\`&&\\4\\.platform!==\`win32\`\\)\\)return null;`, 'g');
 const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
+// Desktop 26.1021 admits Windows natively; preserve its plugin-enabled check.
+const nativeSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
 const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
 const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
 const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
@@ -2072,12 +2074,19 @@ function countRe(re, source = text) {
 }
 
 const pluginCount = countRe(originalPluginGateRe);
-const surfaceCount = countRe(originalSurfaceGateRe);
+const originalSurfaceCount = countRe(originalSurfaceGateRe);
+const nativeSurfaceCount = countRe(nativeSurfaceGateRe);
+const surfaceCount = originalSurfaceCount + nativeSurfaceCount;
 const markerCount = count(marker);
 const patchedPluginCount = countRe(patchedPluginGateRe);
 const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
 const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
 if (markerCount || patchedPluginCount || patchedSurfaceCount) {
+  if (markerCount === 1 && patchedPluginCount === 1 && pluginCount === 0 &&
+      nativeSurfaceCount === 1 && originalSurfaceCount === 0 && patchedSurfaceCount === 0 && modernLayout) {
+    process.stdout.write('already-patched');
+    process.exit(0);
+  }
   if (markerCount === 1 && patchedPluginCount === 1 &&
       patchedSurfaceCount === 1 && pluginCount === 0 && surfaceCount === 0 &&
       (legacyLayout || modernLayout)) {
@@ -2107,13 +2116,14 @@ if (pluginCount !== 1 || surfaceCount !== 1) {
   process.stderr.write(`current CUA surface anchors not found exactly once: plugin=${pluginCount} surface=${surfaceCount}\n`);
   process.exit(2);
 }
-if (!legacyLayout && !modernLayout) {
+if ((!legacyLayout && !modernLayout) || (nativeSurfaceCount && !modernLayout)) {
   process.stderr.write('unsupported or ambiguous CUA readiness predicate; refusing to modify the asset\n');
   process.exit(2);
 }
 
 const layout = modernLayout ? 'modern' : 'legacy';
-const expectedSurfaceGateRe = modernLayout ? modernPatchedSurfaceGateRe : legacyPatchedSurfaceGateRe;
+const expectedSurfaceGateRe = nativeSurfaceCount ? nativeSurfaceGateRe :
+  modernLayout ? modernPatchedSurfaceGateRe : legacyPatchedSurfaceGateRe;
 const next = text
   .replace(originalPluginGateRe, (match, p, i, a, e) => buildPluginGate(p, i, a, e))
   .replace(originalSurfaceGateRe, (match, result, flag, platform, features, state) =>

@@ -153,7 +153,9 @@ function Get-CodexMainProcess {
 
   $normalizedPath = [System.IO.Path]::GetFullPath($ExactPath)
   foreach ($process in Get-CimInstance Win32_Process -Filter "Name='ChatGPT.exe' OR Name='Codex.exe'" -ErrorAction SilentlyContinue) {
-    if (-not [string]::IsNullOrWhiteSpace([string]$process.ExecutablePath) -and
+    if (-not [string]::IsNullOrWhiteSpace([string]$process.CommandLine) -and
+        $process.CommandLine -notmatch '(?i)(?:^|\s)--type(?:=|\s)' -and
+        -not [string]::IsNullOrWhiteSpace([string]$process.ExecutablePath) -and
         [string]::Equals([System.IO.Path]::GetFullPath([string]$process.ExecutablePath), $normalizedPath, [StringComparison]::OrdinalIgnoreCase)) {
       return $process
     }
@@ -171,7 +173,7 @@ function Start-CodexPackageAndWait {
   if ($process) {
     return $process
   }
-  Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList "shell:AppsFolder\$($Descriptor.AppUserModelId)"
+  Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList "shell:AppsFolder\$($Descriptor.AppUserModelId)" | Out-Null
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
   do {
     Start-Sleep -Milliseconds 500
