@@ -1,5 +1,7 @@
 # Codex Auto Repatch for Windows
 
+
+The live progress viewer translates common update, build, signing and installation messages into Chinese. Original log files, error codes, paths and unrecognized diagnostics remain unchanged. See also [read-only dots diagnostics](references/dots-diagnostics.md).
 <p align="center"><img src="assets/readme-mark.png" alt="Codex Windows patch" width="160"></p>
 
 [简体中文](README.md)

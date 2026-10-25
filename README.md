@@ -1,5 +1,7 @@
 # Codex 自动化重补丁 for Windows
 
+
+实时进度窗口将常见更新、构建、签名和安装提示显示为中文；原始日志、错误码、路径与未识别的诊断保持原样，便于排错。另见 [dots 只读诊断](references/dots-diagnostics.md)。
 <p align="center"><img src="assets/readme-mark.png" alt="Codex Windows patch" width="160"></p>
 
 [English](README.en.md)

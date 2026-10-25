@@ -1,3 +1,34 @@
+function Resolve-RepairPhysicalPath {
+  param([Parameter(Mandatory)][string]$Path)
+  if (-not ('RepairPhysicalPath' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RepairPhysicalPath {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint size, uint flags);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  public static string Resolve(string path) {
+    var handle=CreateFile(path,0,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
+    if(handle==new IntPtr(-1)) throw new System.ComponentModel.Win32Exception();
+    try {
+      var buffer=new StringBuilder(32768);
+      uint size=GetFinalPathNameByHandle(handle,buffer,(uint)buffer.Capacity,0);
+      if(size==0 || size>=buffer.Capacity) throw new System.ComponentModel.Win32Exception();
+      string result=buffer.ToString();
+      if(result.StartsWith(@"\\?\UNC\")) return @"\\"+result.Substring(8);
+      return result.StartsWith(@"\\?\") ? result.Substring(4) : result;
+    } finally { CloseHandle(handle); }
+  }
+}
+'@
+  }
+  return [RepairPhysicalPath]::Resolve($Path)
+}
+
 function ConvertTo-RepairUtcDateTime {
   param([Parameter(Mandatory = $true)][object]$Value)
   # ConvertFrom-Json in recent PowerShell converts ISO timestamps to DateTime.
@@ -5,6 +36,12 @@ function ConvertTo-RepairUtcDateTime {
   if ($Value -is [DateTimeOffset]) { return $Value.UtcDateTime }
   if ($Value -is [DateTime]) { return $Value.ToUniversalTime() }
   return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+}
+
+function Test-RepairProcessNotFoundError {
+  param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+  return ($ErrorRecord.FullyQualifiedErrorId -like 'NoProcessFoundForId*' -or
+    $ErrorRecord.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId*')
 }
 
 function Assert-RepairStatePath {
@@ -105,7 +142,7 @@ function New-RepairDeploymentState {
 function Write-RepairDeploymentState {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$State
+    [Parameter(Mandatory = $true)][object]$State
   )
   $fullPath = Assert-RepairStatePath $Path
   $State.updatedUtc = [DateTime]::UtcNow.ToString('o')
@@ -131,6 +168,36 @@ function Write-RepairDeploymentState {
   } finally {
     if ($created -and [IO.File]::Exists($temporaryPath)) { [IO.File]::Delete($temporaryPath) }
   }
+}
+
+function Set-RepairAcceptanceCheckpoint {
+  param(
+    [Parameter(Mandatory = $true)][object]$State,
+    [Parameter(Mandatory = $true)][string]$CurrentPackageFullName,
+    [Parameter(Mandatory = $true)][bool]$InstallerExited,
+    [Parameter(Mandatory = $true)][bool]$DesktopLaunchPassed,
+    [Parameter(Mandatory = $true)][bool]$FastWirePassed,
+    [Parameter(Mandatory = $true)][object]$ModelList,
+    [Parameter(Mandatory = $true)][bool]$StrictVerificationPassed
+  )
+  if ($State.acceptancePassed -or $State.stage -notin @('deploying', 'verifying')) {
+    throw 'Post-deployment acceptance can only complete a pending deployment checkpoint.'
+  }
+  if ($CurrentPackageFullName -cne $State.targetPackageFullName) {
+    throw 'Post-deployment acceptance requires the exact currently registered target package.'
+  }
+  if (-not $InstallerExited -or -not $DesktopLaunchPassed -or -not $FastWirePassed -or -not $StrictVerificationPassed) {
+    throw 'Post-deployment acceptance evidence is incomplete.'
+  }
+  if (-not $ModelList.model -or @($ModelList.serviceTiers) -notcontains 'priority') {
+    throw 'Post-deployment model/list evidence does not expose the Fast tier for the default model.'
+  }
+
+  $State.acceptancePassed = $true
+  $State.verifiedPackageFullName = $CurrentPackageFullName
+  $State.verifiedUtc = [DateTime]::UtcNow.ToString('o')
+  $State.stage = 'cleanup-pending'
+  $State.cleanupStatus = 'pending'
 }
 
 function Read-RepairDeploymentState {
