@@ -22,7 +22,7 @@ Failures open one interactive CLI terminal by default. The `%USERPROFILE%\.codex
 
 Missing current CUA runtimes are restored directly from the installed official package using content streams, length and SHA-256 verification, and atomic publication. Matching runtimes are reused. This avoids waiting twenty minutes on stalled Desktop extraction while preserving packaging, signing and installation checks.
 
-The automatic scope is Chrome/Browser, Windows Computer Use and custom-model visibility. Other manual tools remain available in [SKILL.md](SKILL.md). Unknown bundle layouts stop preparation instead of being treated as compatible.
+The automatic scope is the full non-phone patch: Fast request/UI gates, model visibility, Power/Ultra, locale, plugin UI, Goal, Chrome/Browser and Windows Computer Use. Existing model/provider settings remain; phone remote control, system prompts, additional CUA proxy injection and optional plugin installation are not enabled automatically. Unknown bundle layouts stop preparation instead of being treated as compatible. See [SKILL.md](SKILL.md) for individual repair scopes.
 
 Signing recognizes the certificate's own EKU extension and reuses an existing valid private key. Before app shutdown or removal, the watcher checks LocalMachine TrustedPeople and requests UAC only if the validated artifact's signer is missing. A cancelled or failed trust step preserves the installed app. Repeated manual trust is unnecessary while that certificate remains valid. A verified exact patched recovery with successful finalization and a stable window suppresses CLI launch; an unverified or failed recovery keeps the CLI fallback. Retaining a patched artifact alone does not perform an automatic rollback.
 
@@ -80,7 +80,7 @@ Set-Location "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1 -EnableAutomation
 ```
 
-The existing directory name is required for skill/path compatibility. `-EnableAutomation` grants continuing, current-user authorization and registers `Codex Desktop Post-Update Repair`. Future Store updates may close and repair Desktop automatically. Setup backs up old scripts and verifies the independent CLI; it does not immediately repatch Desktop.
+The existing directory name is required for skill/path compatibility. `-EnableAutomation` grants continuing, current-user authorization for the full non-phone patch and registers `Codex Desktop Post-Update Repair`. Future Store updates may close and repair Desktop automatically. Setup backs up old scripts and verifies the independent CLI; it does not immediately repatch Desktop. Older narrow authorizations are not expanded automatically; use `-EnableAutomation` to renew them only after explicit consent to the full scope.
 
 Verification defaults to background read-only checks. It does not automatically open Calculator or another test app, change native-window focus, or inject mouse/keyboard input. Runtime, plugin, and window-enumeration results are reported separately. Live native screenshot/input tests run only when explicitly requested or authorized, and untested operations are identified as such.
 

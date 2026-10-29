@@ -16,6 +16,7 @@ $dataRoot = (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\
 $script:RepairRunRoot = Join-Path $dataRoot 'model-experience-repair-runs'
 $script:RepairLogRoot = Join-Path $dataRoot 'model-experience-repair-logs'
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
+. (Join-Path $PSScriptRoot 'lib\package-copy.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 . (Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1')
 $patcher = Join-Path $PSScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
@@ -461,9 +462,13 @@ function Copy-RecoveryPackageLayout {
     [string]$DestinationRoot
   )
   New-Item -ItemType Directory -Force -Path $DestinationRoot | Out-Null
+  $sourceAsar = Join-Path $SourceRoot 'app\resources\app.asar'
+  $recoveryAsar = Join-Path $DestinationRoot 'app\resources\app.asar'
   & robocopy.exe $SourceRoot $DestinationRoot /E /COPY:DAT /DCOPY:DAT /XJ /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-  if ($LASTEXITCODE -gt 7) {
-    throw "Recovery package copy failed with robocopy exit code $LASTEXITCODE"
+  $copyExitCode = $LASTEXITCODE
+  if ($copyExitCode -gt 7 -or -not (Test-Path -LiteralPath $recoveryAsar -PathType Leaf)) {
+    Write-Log "recovery copy incomplete (robocopy exit $copyExitCode); retrying with data-only stream copy"
+    Copy-DirectoryDataOnly -Source $SourceRoot -Destination $DestinationRoot
   }
   foreach ($relativePath in @('AppxSignature.p7x', 'AppxBlockMap.xml', 'AppxMetadata\CodeIntegrity.cat')) {
     $path = Join-Path $DestinationRoot $relativePath
@@ -471,8 +476,6 @@ function Copy-RecoveryPackageLayout {
       Remove-Item -LiteralPath $path -Force
     }
   }
-  $sourceAsar = Join-Path $SourceRoot 'app\resources\app.asar'
-  $recoveryAsar = Join-Path $DestinationRoot 'app\resources\app.asar'
   if (-not (Test-Path -LiteralPath $recoveryAsar -PathType Leaf) -or
       (Get-FileHash -LiteralPath $sourceAsar -Algorithm SHA256).Hash -cne
       (Get-FileHash -LiteralPath $recoveryAsar -Algorithm SHA256).Hash) {
@@ -649,7 +652,7 @@ function Start-AndValidateCodex {
   $application = @($manifest.Package.Applications.Application) | Select-Object -First 1
   if (-not $application) { throw 'The installed Codex package has no application entry.' }
   $appUserModelId = "$($Package.PackageFamilyName)!$($application.Id)"
-  $executable = Join-Path $Package.InstallLocation ([string]$application.Executable).Replace('/', '\')
+  $executable = Resolve-RepairPhysicalPath (Join-Path $Package.InstallLocation ([string]$application.Executable).Replace('/', '\'))
   $processName = [IO.Path]::GetFileNameWithoutExtension($executable)
   Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
   $deadline = (Get-Date).AddSeconds(45)
@@ -657,7 +660,10 @@ function Start-AndValidateCodex {
   while (-not $process -and (Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
     $process = Get-Process -Name $processName -ErrorAction SilentlyContinue |
-      Where-Object { $_.Path -and $_.Path.Equals($executable, [StringComparison]::OrdinalIgnoreCase) } |
+      Where-Object {
+        $_.Path -and (Resolve-RepairPhysicalPath $_.Path).Equals($executable, [StringComparison]::OrdinalIgnoreCase) -and
+        $_.MainWindowHandle -ne 0 -and $_.Responding
+      } |
       Select-Object -First 1
   }
   if (-not $process) { throw "Codex did not start from the installed package path: $executable" }

@@ -730,7 +730,7 @@ function Assert-RepairAuthorization {
   if (-not $AllowConsumed -and [DateTimeOffset]::UtcNow -ge $expiresAt.ToUniversalTime()) {
     throw "one-click update authorization expired at $($expiresAt.ToString('o'))"
   }
-  if ([string]$Authorization.scope -ne 'browser-computer-use-plus-custom-model-visibility') {
+  if ([string]$Authorization.scope -cne 'full-non-phone') {
     throw "one-click update authorization has an unsupported scope: $($Authorization.scope)"
   }
   $expectedTaskName = 'Codex One-Click Update {0} {1}' -f [string]$ExpectedUpdateVersion, $AuthorizationId.Substring(0, 8).ToLowerInvariant()

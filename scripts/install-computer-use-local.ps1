@@ -4723,8 +4723,7 @@ function Install-ComputerUse {
   Update-BundledMarketplaceManifest $marketplaceRoot
 
   $reservedMarketplaceRoot = Get-ReservedBundledMarketplaceRoot $codexHomeResolved
-  if ($BrowserComputerUseOnly -and
-      [System.IO.Path]::GetFullPath($reservedMarketplaceRoot) -ne [System.IO.Path]::GetFullPath($marketplaceRoot)) {
+  if ([System.IO.Path]::GetFullPath($reservedMarketplaceRoot) -ne [System.IO.Path]::GetFullPath($marketplaceRoot)) {
     Sync-BundledMarketplaceFromInstalledApp $reservedMarketplaceRoot $installedMarketplaceRoot
     Patch-ChromeWindowsRegistryParsing (Join-Path $reservedMarketplaceRoot 'plugins\chrome') $trustedChromeBrowserClient
     Write-PluginTree (Join-Path $reservedMarketplaceRoot 'plugins\computer-use')

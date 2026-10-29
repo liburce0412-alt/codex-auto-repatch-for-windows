@@ -7,8 +7,11 @@ repaired must not host its own installer.
 ## Source-version handoff and upstream direct installers
 
 The automatic watcher requires the authorized source version and package identity.
-Its producer passes `-PreserveSourceVersion -OnlyBrowserComputerUse -ForceRebuild`
-for preparation only; `-PreserveSourceVersion -Install` is rejected before work.
+With explicit authorization for full non-phone repair, its producer passes
+`-PreserveSourceVersion -ForceRebuild` through the full non-phone patch path.
+Standing, one-click and consumed authorizations must use `full-non-phone`;
+old narrow records must not be silently expanded. Version preservation is for
+preparation only; `-PreserveSourceVersion -Install` is rejected before work.
 The post-update repair entrypoint requires `-PrepareExternalInstall` for a full
 repatch. It cannot silently enter the generic revision-incrementing installer.
 Every newly signed artifact passes MSIX block-map payload verification before

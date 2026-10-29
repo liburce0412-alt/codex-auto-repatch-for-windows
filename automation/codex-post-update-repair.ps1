@@ -394,6 +394,9 @@ function Assert-OneClickAuthorization {
   if ([int]$authorization.schema -ne 1 -or [string]$authorization.status -ne 'consumed') {
     throw 'one-click repair requires a consumed authorization record'
   }
+  if ([string]$authorization.scope -cne 'full-non-phone') {
+    throw 'one-click repair requires full non-phone patch authorization'
+  }
   if (-not [string]::Equals([string]$authorization.authorization_id, $AuthorizationId, [StringComparison]::OrdinalIgnoreCase) -or
       [version][string]$authorization.expected_update_version -ne $ExpectedVersion -or
       -not [string]::Equals([string]$authorization.expected_package_full_name, $ExpectedPackageFullName, [StringComparison]::OrdinalIgnoreCase)) {
@@ -1097,11 +1100,8 @@ function Invoke-Main {
   $state.Remove('last_error')
   Write-RepairState $state
 
-  $pluginCommand = Get-Command -Name $PluginRepairScript -ErrorAction Stop
-  if (-not $pluginCommand.Parameters.ContainsKey('BrowserComputerUseOnly')) {
-    throw 'Computer Use repair script does not expose the required BrowserComputerUseOnly scope; refusing a broader repair'
-  }
-  $pluginRepairArguments = @('-VerifyOnly', '-BrowserComputerUseOnly')
+  Write-RepairLog '补丁范围：完整非手机补丁（Fast、模型显示、Power/Ultra、语言、插件、Goal、浏览器与电脑控制）'
+  $pluginRepairArguments = @('-VerifyOnly')
   $restartDesktopAfterRepair = $false
 
   if (-not $needsPluginRetry -or $needsFullRepatch -or $versionChanged -or $packageChanged) {
@@ -1143,7 +1143,7 @@ function Invoke-Main {
   $pluginWarning = ''
   if ($pluginResult.ExitCode -ne 0) {
     if ($PrepareExternalInstall) {
-      throw "scoped Browser/Chrome/Computer Use pre-sync failed before package handoff; the installed package was not removed. See $($pluginResult.StderrPath)"
+      throw "full plugin pre-sync failed before package handoff; the installed package was not removed. See $($pluginResult.StderrPath)"
     }
     if ($pluginResult.Combined -match 'sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES') {
       $pluginWarning = 'independent runtime verification requires trusted node_repl; files were synchronized'
@@ -1161,12 +1161,6 @@ function Invoke-Main {
       throw 'Full automatic repatch requires the exact-artifact external watcher; direct installation is not supported here'
     }
     $patchCommand = Get-Command -Name $PatchScript -ErrorAction Stop
-    if (-not $patchCommand.Parameters.ContainsKey('OnlyBrowserComputerUse')) {
-      throw 'MSIX patch script does not expose the required OnlyBrowserComputerUse scope; refusing a broader repatch'
-    }
-    if (-not $patchCommand.Parameters.ContainsKey('IncludeCustomModelVisibility')) {
-      throw 'MSIX patch script does not expose the required IncludeCustomModelVisibility scope; refusing a broader Model Experience repatch'
-    }
     if ($PrepareExternalInstall -and -not $patchCommand.Parameters.ContainsKey('PreserveSourceVersion')) {
       throw 'MSIX patch script cannot preserve the authorized exact-artifact version'
     }
@@ -1190,8 +1184,6 @@ function Invoke-Main {
     }
 
     $packageArguments = @(
-      '-OnlyBrowserComputerUse',
-      '-IncludeCustomModelVisibility',
       '-InstallPrerequisites',
       '-ForceRebuild',
       '-AppPath', $sourceCandidate.AppPath,
@@ -1269,7 +1261,7 @@ function Invoke-Main {
 
   $pluginPostResult = Invoke-PwshScript -Label 'plugin-sync-post' -ScriptPath $PluginRepairScript -Arguments $pluginRepairArguments
   if ($pluginPostResult.ExitCode -ne 0) {
-    throw "scoped Browser/Chrome/Computer Use post-sync failed; see $($pluginPostResult.StderrPath)"
+    throw "full plugin post-sync failed; see $($pluginPostResult.StderrPath)"
   }
   $pluginWarning = ''
 

@@ -12,7 +12,7 @@ by a normal deployment. See the rewritten [README](README.md) for installation,
 live progress, independent CLI fallback and manifest-based cleanup. Keep the skill
 directory name `codex-windows-fast-patch` for compatibility.
 
-The local post-update workflow uses `-OnlyBrowserComputerUse -IncludeCustomModelVisibility -ForceRebuild`. This mode also validates and patches the Windows CUA surface gates in the same ASAR pass, including dry-run and already-patched checks. Missing, partial, or ambiguous surface patterns stop the repair before packaging. Do not combine it with `-OnlyComputerUseSurface`. Future Desktop layouts still require validation; this does not establish real UI acceptance.
+The post-update workflow uses the default full patch path with `-ForceRebuild -PreserveSourceVersion`, without targeted `-Only*` flags, after explicit authorization for full non-phone repair. It covers Fast request/UI, model visibility, Power/Ultra, locale, plugin UI, Goal, Browser/Chrome and Windows Computer Use while preserving model/provider settings. The standing and one-click authorization scope is `full-non-phone`; old narrow authorizations fail closed rather than silently expanding. Phone remote control, system prompts, additional CUA proxy injection and optional plugin installation remain opt-in. Missing, partial or ambiguous targets stop preparation; prior validation does not establish future-version or real UI acceptance.
 
 The default Browser/Computer Use scope and full repack also include `patch-browser-import-diagnostics.cjs`. It preserves import behavior while logging thrown import errors through the existing sensitive-error channel as `Browser profile import exception`; it does not add request/result logging. The user deferred installation of this diagnostic change until their next repack on 2026-09-25. Do not start a repack or restart solely to apply it. This is diagnostic instrumentation, not a verified fix for Chrome cookie import.
 
@@ -119,7 +119,7 @@ When Chrome session/tab commands or the browser portion of `cua.getState()` repo
 
 ## Reviewed Desktop 26.924 integration
 
-See [the integration record](references/upstream-20260926-integration.md) for reviewed upstream main and PRs, the actual staged-package dry run, and the remaining install/UI acceptance boundary. Automatic artifact preparation now passes `-PreserveSourceVersion` together with `-OnlyBrowserComputerUse -ForceRebuild`; the switch is forbidden with direct `-Install`. Signed outputs must pass block-map payload verification before their path is published to the external watcher. The existing hash, identity, signature, backup, fallback and stable-start cleanup checks still apply.
+See [the integration record](references/upstream-20260926-integration.md) for reviewed upstream main and PRs, the actual staged-package dry run, and the remaining install/UI acceptance boundary. Automatic artifact preparation passes `-PreserveSourceVersion -ForceRebuild` through the full non-phone patch path; the version-preserving switch is forbidden with direct `-Install` or other targeted modes except Browser/Computer Use. Signed outputs must pass block-map payload verification before their path is published to the external watcher. The existing hash, identity, signature, backup, fallback and stable-start checks still apply.
 
 ## External Executor For Desktop-Restarting Repairs
 

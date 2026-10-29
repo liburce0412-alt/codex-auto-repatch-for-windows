@@ -38,7 +38,7 @@ $lockPath = Join-Path $automationRoot 'update-cycle-active.lock'
 $persistentTaskName = 'Codex Desktop Post-Update Repair'
 $expectedPackageFamilyName = 'OpenAI.Codex_2p2nqsd0c76g0'
 $expectedPublisher = 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
-$expectedScope = 'browser-computer-use-plus-custom-model-visibility'
+$expectedScope = 'full-non-phone'
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 function Get-ValidStandingAuthorization {
@@ -421,7 +421,7 @@ $authorization = [ordered]@{
   schema = 1
   status = 'armed'
   authorization_id = $authorizationId
-  scope = 'browser-computer-use-plus-custom-model-visibility'
+  scope = $expectedScope
   standing_authorization_id = if ($standingAuthorization) { $StandingAuthorizationId.ToLowerInvariant() } else { '' }
   granted_at = $grantedAt.ToString('o')
   expires_at = $expiresAt.ToString('o')
@@ -464,7 +464,7 @@ $task = New-ScheduledTask `
   -Trigger $resumeTrigger `
   -Principal $principal `
   -Settings $settings `
-  -Description 'One-time, exact-version Codex Store update plus scoped Browser/Computer Use and custom-model repatch; generated from an explicit one-time or standing authorization.'
+  -Description 'One-time, exact-version Codex Store update plus full non-phone repatch; generated from an explicit one-time or standing authorization.'
 
 if ($ValidateOnly) {
   [pscustomobject]@{

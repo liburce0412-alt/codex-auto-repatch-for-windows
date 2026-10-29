@@ -13,7 +13,7 @@ $backupRoot = Join-Path $env:USERPROFILE '.codex\backups\post-update-automation'
 $expectedPackageName = 'OpenAI.Codex'
 $expectedPackageFamilyName = 'OpenAI.Codex_2p2nqsd0c76g0'
 $expectedPublisher = 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
-$expectedScope = 'browser-computer-use-plus-custom-model-visibility'
+$expectedScope = 'full-non-phone'
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {

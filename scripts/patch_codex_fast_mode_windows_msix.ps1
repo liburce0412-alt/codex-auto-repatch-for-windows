@@ -32,6 +32,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
+. (Join-Path $PSScriptRoot 'lib\package-copy.ps1')
 $LogPrefix = '[codex-msix-patch-win]'
 $OutputRootWasExplicit = $PSBoundParameters.ContainsKey('OutputRoot')
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
@@ -50,8 +51,10 @@ function Fail {
   throw "$LogPrefix error: $Message"
 }
 
-if ($PreserveSourceVersion -and ($Install -or -not $OnlyBrowserComputerUse)) {
-  Fail 'PreserveSourceVersion is only for Browser/Computer Use artifact preparation by the exact-version external watcher; direct installation is forbidden'
+if ($PreserveSourceVersion -and ($Install -or -not $ForceRebuild -or
+    $OnlyModelExperience -or $OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or
+    $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv)) {
+  Fail 'PreserveSourceVersion requires a fresh full or Browser/Computer Use artifact for the exact-version external watcher; direct installation is forbidden'
 }
 
 if (($OnlyBrowserComputerUse -and $OnlyBundledMarketplaceCopy) -or
@@ -549,53 +552,6 @@ function Require-WindowsSdkTool {
     Fail "$ToolName not found. Re-run with -InstallPrerequisites or install Windows SDK manually."
   }
   return [string]$tool
-}
-
-function Copy-FileDataOnly {
-  param(
-    [Parameter(Mandatory = $true)][string]$Source,
-    [Parameter(Mandatory = $true)][string]$Destination
-  )
-  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
-  $inputStream = [System.IO.File]::Open($Source, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
-  try {
-    $outputStream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-    try {
-      $inputStream.CopyTo($outputStream)
-    } finally {
-      $outputStream.Dispose()
-    }
-  } finally {
-    $inputStream.Dispose()
-  }
-  try {
-    $sourceItem = Get-Item -LiteralPath $Source -Force
-    [System.IO.File]::SetLastWriteTimeUtc($Destination, $sourceItem.LastWriteTimeUtc)
-  } catch {
-    Write-Log "warning: could not preserve timestamp for $Destination`: $($_.Exception.Message)"
-  }
-}
-
-function Copy-DirectoryDataOnly {
-  param(
-    [Parameter(Mandatory = $true)][string]$Source,
-    [Parameter(Mandatory = $true)][string]$Destination
-  )
-  if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
-    Fail "source directory not found: $Source"
-  }
-  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-  foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
-    $target = Join-Path $Destination $item.Name
-    if ($item.PSIsContainer -and (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)) {
-      Copy-DirectoryDataOnly -Source $item.FullName -Destination $target
-    } elseif ($item.PSIsContainer) {
-      Write-Log "warning: copying reparse directory as an empty directory: $($item.FullName)"
-      New-Item -ItemType Directory -Force -Path $target | Out-Null
-    } else {
-      Copy-FileDataOnly -Source $item.FullName -Destination $target
-    }
-  }
 }
 
 function Copy-PackageLayout {

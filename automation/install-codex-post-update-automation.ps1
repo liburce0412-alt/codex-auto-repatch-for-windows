@@ -25,7 +25,7 @@ $shortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Codex.lnk'
 $backupRoot = Join-Path $env:USERPROFILE '.codex\backups\post-update-automation'
 $expectedPackageFamilyName = 'OpenAI.Codex_2p2nqsd0c76g0'
 $expectedPublisher = 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
-$expectedScope = 'browser-computer-use-plus-custom-model-visibility'
+$expectedScope = 'full-non-phone'
 $appUserModelId = "$expectedPackageFamilyName!App"
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 

@@ -21,7 +21,7 @@ Windows 商店更新 Codex Desktop 后，自动重新应用已适配的本地补
 - **已验证的补丁恢复不打开 CLI**：当前精确版本的补丁包、成功后处理记录和稳定窗口通过验证后，不进入失败兜底；失败时遵循自动 CLI 开关。保留补丁包本身不等于自动完成回退。
 - **运行环境直接恢复**：缺少当前运行环境时，从已安装的官方包按文件复制内容、校验长度和 SHA-256 后原子发布，避免反复等待卡住的解压。已有匹配环境直接复用；打包、签名和安装校验仍然保留。
 
-默认自动化范围是 Chrome/Browser、Windows Computer Use 与自定义模型可见性。仓库也保留手动修复工具，具体适用范围见 [SKILL.md](SKILL.md)。未知代码结构会中止打包，不承诺所有未来版本通用。
+默认自动化范围是完整非手机补丁：Fast 请求与入口、模型可见性、Power/Ultra、语言、插件入口、Goal、Chrome/Browser 与 Windows Computer Use。保留模型和服务商配置；不自动启用手机远控、系统提示词、额外 CUA 代理注入或可选插件。未知代码结构会中止打包，不承诺所有未来版本通用。具体适用范围见 [SKILL.md](SKILL.md)。
 
 下次按默认范围或完整范围重打包时，会一并加入浏览器数据导入异常日志。导入失败时可查找 `Browser profile import exception`，错误走现有敏感日志通道，不额外记录导入请求或结果。此改动只帮助定位 Cookie 导入失败，不代表已修复；更新脚本文件本身不会触发安装或重启。
 
@@ -77,7 +77,7 @@ Set-Location "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 pwsh.exe -NoProfile -File .\scripts\install-update-automation.ps1 -EnableAutomation
 ```
 
-`-EnableAutomation` 为当前用户创建长期更新授权，注册任务计划 `Codex Desktop Post-Update Repair`，允许商店更新后自动关闭并修复 Codex。安装脚本会备份旧脚本，部署自动化组件并验证独立 CLI。它不会立即执行重补丁。
+`-EnableAutomation` 为当前用户创建完整非手机补丁的长期更新授权，注册任务计划 `Codex Desktop Post-Update Repair`，允许商店更新后自动关闭并修复 Codex。安装脚本会备份旧脚本，部署自动化组件并验证独立 CLI。它不会立即执行重补丁。旧版窄范围授权不会被自动扩大；用户明确同意完整范围后，再使用 `-EnableAutomation` 更新授权。
 
 目录名保留 `codex-windows-fast-patch`，用于兼容技能识别和现有自动化路径；仓库展示名与此不同。
 
